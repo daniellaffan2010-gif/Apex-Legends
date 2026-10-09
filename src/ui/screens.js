@@ -3,7 +3,7 @@ import { S, paused, setPaused } from '../game/session.js';
 import { AUDIO } from '../audio/audio.js';
 
 /* ---------- 7. interface -------------------------------------------------- */
-const SCREENS = ["screen-title", "screen-setup", "screen-results", "screen-standings"];
+const SCREENS = ["screen-title", "screen-setup", "screen-results", "screen-standings", "screen-garage"];
 function show(id){
   for(const s of SCREENS) document.getElementById(s).hidden = (s !== id);
   const racing = id === null;

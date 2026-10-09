@@ -43,7 +43,7 @@ for (let r = 0; r < 2; r++) {
         // a swap between two cars that were both on the track last frame and now
         const pos = new Map(prevOrder.map((x, i) => [x, i]));
         for (let i = 0; i < order.length; i++) for (let j = i + 1; j < order.length; j++)
-          if (pos.has(order[i]) && pos.has(order[j]) && pos.get(order[i]) > pos.get(order[j])) swaps++;
+          if (pos.has(order[i]) && pos.has(order[j]) && pos.get(order[i]) > pos.get(order[j]) && live[i].prog - live[j].prog > 2) swaps++;   // nose-to-tail ties in a hairpin flip with the line, they are not passes
       }
       prevOrder = order;
       // once the field has settled behind the car: the nearest any two cars on the road get to each other
@@ -67,7 +67,7 @@ for (let r = 0; r < 2; r++) {
   ok(S.sc.state === 'off' && !S.sc.car, 'green flag and the car is gone');
   // race goes on and finishes
   let more = 0; while (!S.ended && more < 60 * 60 * 10) { SS.update(1 / 60, 1 / 60); more++; if (S.player.finished) break; }
-  ok(S.player.finished || S.ended, 'the race finishes after the restart');
+  ok(S.player.finished || S.ended, `the race finishes after the restart (clock ${S.clock.toFixed(0)}, lap ${S.player.lap}/${S.laps}, ended ${S.ended})`);
 }
 
 // ---------- 2. natural deployments ----------

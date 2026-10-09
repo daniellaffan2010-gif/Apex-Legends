@@ -14,8 +14,8 @@ class UMesher extends Mesher {
   constructor(){ super(); this.uv = []; }
   /* a quad a(bottom left), b(bottom right), c(top right), d(top left) with its texture rectangle */
   quadUV(a, b, c, d, C, u0, v0, u1, v1){
-    this.tri(a, b, c, C); this.tri(a, c, d, C);
-    this.uv.push(u0, v0, u1, v0, u1, v1, u0, v0, u1, v1, u0, v1);
+    if(this.tri(a, b, c, C)) this.uv.push(u0, v0, u1, v0, u1, v1);
+    if(this.tri(a, c, d, C)) this.uv.push(u0, v0, u1, v1, u0, v1);
   }
   geometry(){ const g = super.geometry(); g.setAttribute("uv", new THREE.Float32BufferAttribute(this.uv, 2)); return g; }
 }

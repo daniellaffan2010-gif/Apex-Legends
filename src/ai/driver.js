@@ -3,6 +3,7 @@ import { angWrap, clamp, lerp } from '../config/util.js';
 import { AUDIO } from '../audio/audio.js';
 import { BRAKE, DRAG, GRIP, VMAX, tyreGripK, tyreLoad } from '../car/physics.js';
 import { TYRES } from '../car/parts.js';
+import * as AERO from '../car/aero.js';
 
 /* ---------- 4. AI --------------------------------------------------------- */
 // The rail followers track their own speed in railV; the player's car does not,
@@ -91,8 +92,7 @@ function stintLaps(tyre, S, T){ return 0.72 / (tyre.wear * S.wearMul * lapWearLo
 function chooseTyre(c, S){
   if(S.wetTarget > 0.4 && S.wet > 0.3) return TYRES.wet;
   const left = Math.max(1, S.laps - c.lap);
-  const needNew = S.mustPit && c.used.size < 2;
-  const opts = [TYRES.soft, TYRES.medium, TYRES.hard].filter(t => !(needNew && c.used.has(t.key)));
+  const opts = [TYRES.soft, TYRES.medium, TYRES.hard];
   // the softest set that gets to the flag, with a little in hand; else the longest-lasting
   for(const t of opts) if(stintLaps(t, S, c.T) >= left * 1.05) return t;
   return opts[opts.length - 1];
@@ -174,8 +174,8 @@ function driveAI(c, S, dt){
   const fi = (((sNow + v * 0.06) / T.ds) % T.n + T.n) % T.n, j0 = Math.floor(fi), j1 = (j0 + 1) % T.n;
   const vline = lerp(P[j0], P[j1], fi - j0);
   const wetK = S.wet > 0 ? lerp(1, c.tyre.key === "wet" ? 0.93 : 0.68, S.wet) : 1;
-  const gripK = tyreGripK(c) * wetK * c.perf.grip * c.pace * (1 - c.damage * 0.22);
-  const topV = VMAX * c.pace * c.perf.top * (c.boost > 0 && c.batt > 0.02 && c.perf.boost ? 1.055 : 1);
+  const gripK = tyreGripK(c) * wetK * c.perf.grip * c.pace * (1 - c.damage * 0.22) * AERO.gripK(c);   // dirty air: brakes earlier, corners slower
+  const topV = VMAX * c.pace * c.perf.top * AERO.topK(c) * (c.boost > 0 && c.batt > 0.02 && c.perf.boost ? 1.055 : 1);
   let vt = Math.min(topV, vline * Math.sqrt(gripK) * S.aiScale * (1 + c.mistake * 0.05));
   // under the safety car the field runs to a delta, well off the limit (a little freer once the car is in)
   if(S.sc && S.sc.state !== "off") vt = Math.min(vt, vline * (S.sc.car ? 0.66 : 0.88));
@@ -238,8 +238,8 @@ function driveAI(c, S, dt){
     const quicker = mine > theirs * 0.998;
     // a car that has crashed, spun or stopped is an obstacle, not a rival to follow
     const stricken = ahead.stalled === true;
-    // tow down the straights — this is what actually breaks a train up
-    if(gap > 8 && gap < 45 && v > 52 && kNow < 0.0045 && lane) vt *= 1.018 + D.push;
+    // the real slipstream (aero.js) lifts topV; a driver in the tow also commits to the run past — this is what breaks a train up
+    if(c.tow > 0.15 && v > 52 && kNow < 0.0045 && lane) vt *= 1 + (0.012 + D.push) * c.tow;
     if(avenging) vt *= 1 + D.push;                        // dig in while the place is fresh
 
     if(stricken){
@@ -402,8 +402,24 @@ function driveAI(c, S, dt){
       if(S.player && !S.player.dnf && Math.abs(c.pos - S.player.pos) <= 3) S.toast(c.drv.last + " spins!");
     }
   }
+  /* Called in: over the last few hundred metres it moves across to the pit side of the road and
+     brakes so as to reach the speed limit at the line (car/pitpilot.js takes it from the entry). */
+  let vtPit = Infinity;
+  if(c.pitReq && S.mode === "race" && T.pitLimit){
+    const toIn = (((T.pitIn - i) % T.n + T.n) % T.n) * T.ds;
+    if(toIn < 380 && T.pitU(i) < 0){
+      want = lerp(want, T.pitSide * (T.half - 1.3), clamp((380 - toIn) / 200, 0, 1));
+      vtPit = Math.sqrt(T.pitLimit * T.pitLimit + 2 * 15 * (toIn + T.pitLimA));
+      // another car heading in just ahead: drop in behind it, so they come down the entry road in single file
+      for(const o of S.cars){
+        if(o === c || o.dnf || !(o.pitReq || o.pitting)) continue;
+        let d = o.s - c.s; if(d < -T.length / 2) d += T.length; if(d > T.length / 2) d -= T.length;
+        if(d > 0 && d < 30) vtPit = Math.min(vtPit, Math.max(10, o.speed - 3 + (d - 16) * 0.6));
+      }
+    }
+  }
   c.aiWant = want;
-  c.aiTargetV = vt * Math.sqrt(c.perf.grip);
+  c.aiTargetV = Math.min(vt * Math.sqrt(c.perf.grip), vtPit);
   c.mistake = lerp(c.mistake, (Math.random() - 0.5) * (1.04 - c.drv.skill) * 1.4, dt * 2.4);
   const straight = T.vprof[ti] > 74;
   c.boost = (straight && c.batt > 0.2 && v > 30 && (gap < 90 || c.batt > 0.6)) ? 1 : 0;
@@ -432,4 +448,4 @@ function driveAI(c, S, dt){
 }
 
 
-export { driveAI, wearMulFor };
+export { aiProfile, driveAI, wearMulFor };

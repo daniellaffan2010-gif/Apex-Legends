@@ -36,7 +36,7 @@ function leaderOf(S){
 function place(T, k){
   const f = k.f, j = ((Math.floor(f) % T.n) + T.n) % T.n, k2 = (j + 1) % T.n, u = f - Math.floor(f);
   const road = clamp(lerp(T.line[j], k.dodgeOff || 0, k.dw || 0), -(T.half - 1.3), T.half - 1.3);
-  const lat = lerp(road, T.pitCentre(j), k.mix);
+  const lat = lerp(road, T.pitFast ? T.pitFast(j) : T.pitCentre(j), k.mix);          // the fast lane: the boxes are in the working lane
   k.x = lerp(T.x[j], T.x[k2], u) + lerp(T.nx[j], T.nx[k2], u) * lat;
   k.y = lerp(T.y[j], T.y[k2], u) + lerp(T.ny[j], T.ny[k2], u) * lat;
   k.z = lerp(T.z[j], T.z[k2], u);

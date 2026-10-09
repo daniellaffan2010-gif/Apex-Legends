@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { TAU, clamp } from '../../config/util.js';
 import { L, shadeC, fh, sst, Mesher, paint, merge } from './cota-kit.js';
-import { shaft, ledge, outline, rooftop } from './singapore-kit.js';
+import { shaft, ledge, outline, rooftop, CELLW } from './singapore-kit.js';
 
 /* ---------- Baku's kit ------------------------------------------------------------------
    A sunny sandstone city: three small shared facade textures (stone with windows, blue glass, concrete panel), lit by the sun
@@ -22,11 +22,16 @@ function dayTextures(){
         if(r() < 0.3){ g.fillStyle = ["#7A9A5A", "#8A5A3A", "#5A7A9A"][Math.floor(r() * 3)]; g.fillRect(X + 4, Y + 7, 4, 18); g.fillRect(X + 24, Y + 7, 4, 18); }
         else if(r() < 0.3){ g.fillStyle = "#5A6A8A"; g.fillRect(X + 8, Y + 7, 16, 6); }
         if(r() < 0.2){ g.fillStyle = "#3A3A44"; g.fillRect(X + 5, Y + 25, 22, 2); }
-      } else if(variant === 1){                            // glass: panes that reflect the sky, white mullions
-        const gr = g.createLinearGradient(X, Y, X, Y + C); gr.addColorStop(0, "#BFE4F4"); gr.addColorStop(1, r() < 0.5 ? "#4E86A8" : "#6AA6C6");
-        g.fillStyle = gr; g.fillRect(X + 1, Y + 1, C - 2, C - 2);
-        if(r() < 0.35){ g.fillStyle = "rgba(255,255,255,0.25)"; g.fillRect(X + 4, Y + 2, 6, C - 4); }
-        g.fillStyle = "#F4F6F8"; g.fillRect(X, Y, C, 1.6); g.fillRect(X, Y, 1.6, C);
+      } else if(variant === 1){                            // glass: a dark aluminium frame, a pane that reflects sky or cloud, a solid spandrel under it
+        g.fillStyle = "#2C4256"; g.fillRect(X, Y, C, C);
+        const k = r(), gr = g.createLinearGradient(X, Y, X, Y + 23);
+        if(k < 0.2){ gr.addColorStop(0, "#F0F8FC"); gr.addColorStop(1, "#8CBCD6"); }           // a pane catching a cloud
+        else if(k < 0.65){ gr.addColorStop(0, "#9AD0EC"); gr.addColorStop(1, "#3E7CA6"); }
+        else { gr.addColorStop(0, "#5C9CC4"); gr.addColorStop(1, "#244E74"); }                  // a deep pane
+        g.fillStyle = gr; g.fillRect(X + 2, Y + 2, C - 3, 21);
+        g.fillStyle = "rgba(255,255,255,0.28)"; g.beginPath(); g.moveTo(X + 3, Y + 22); g.lineTo(X + 14, Y + 2); g.lineTo(X + 20, Y + 2); g.lineTo(X + 9, Y + 22); g.fill();
+        g.fillStyle = r() < 0.5 ? "#4A6C84" : "#56788E"; g.fillRect(X + 2, Y + 24, C - 3, 7);   // spandrel
+        g.fillStyle = "#9CB4C4"; g.fillRect(X, Y + 23, C, 1);
       } else {                                             // concrete panels: pairs of small windows and balcony bands
         g.fillStyle = "#E4E0D6"; g.fillRect(X, Y, C, C);
         g.fillStyle = "#3A4658"; g.fillRect(X + 4, Y + 7, 9, 14); g.fillRect(X + 19, Y + 7, 9, 14);
@@ -189,18 +194,21 @@ function wave(T, M){
 }
 /* the three flame-shaped towers: leaning leaf-shaped shafts, glass below and a bright warm crown above */
 function flame(T, F, beacons){
-  const m = T.get("solid", F.x, F.y), br = T.get("bright", F.x, F.y), ca = Math.cos(F.ang), sa = Math.sin(F.ang);
+  const m = T.get("solid", F.x, F.y), br = T.get("bright", F.x, F.y), gl = T.get("band", F.x, F.y), ca = Math.cos(F.ang), sa = Math.sin(F.ang);
   const hs = [F.h, F.h * 0.93, F.h * 0.86], dx = [-56, 0, 56];
   for(let t = 0; t < 3; t++){
     const cx = F.x + ca * dx[t] * 0.9, cy = F.y + sa * dx[t] * 0.9, H = hs[t], SL = 14, z0 = Math.max(0, F.z || 0);
     const rad = f => 26 * (1 - 0.62 * Math.pow(f, 1.5)) * (0.85 + 0.35 * Math.sin(f * Math.PI)), lean = f => -10 * f * f;
     for(let k = 0; k < SL; k++){
       const f0 = k / SL, f1 = (k + 1) / SL, r0 = rad(f0), r1 = rad(f1), top = f1 > 0.78;
-      const C = top ? L(["#FF8A2A", "#FFB830", "#FF5A2A"][(k + t) % 3]) : L(k & 1 ? "#7AB4DC" : "#5E9CC8");
-      const mesh = top ? br : m, N = 7, zs = (F.z0 != null ? F.z0 : 0);
+      const C = L(["#FF8A2A", "#FFB830", "#FF5A2A"][(k + t) % 3]), N = 7;
       for(let q = 0; q < N; q++){
         const a0 = q / N * TAU + F.ang, a1 = (q + 1) / N * TAU + F.ang, p = (a, rr, f) => [cx + Math.cos(a) * rr + ca * lean(f), cy + Math.sin(a) * rr * 0.62 + sa * lean(f), F.base + f * H];
-        mesh.quad(p(a0, r0, f0), p(a1, r0, f0), p(a1, r1, f1), p(a0, r1, f1), top ? C : (q & 1 ? C : shadeC(k & 1 ? "#7AB4DC" : "#5E9CC8", -0.12)));
+        if(top){ br.quad(p(a0, r0, f0), p(a1, r0, f0), p(a1, r1, f1), p(a0, r1, f1), C); continue; }
+        /* the glass skin: the window texture over a light blue tint, shaded a little by facet so the curve reads */
+        const sh = (q & 1 ? 1 : 0.84) * (k & 1 ? 1 : 0.94), seg = Math.max(r0, r1) * TAU / N * 0.8;
+        const u0 = t * 1.7 + q * seg / CELLW.band / 8, u1 = u0 + seg / CELLW.band / 8, v0 = (F.base + f0 * H) / 3.8 / 8, v1 = (F.base + f1 * H) / 3.8 / 8;
+        gl.quadUV(p(a0, r0, f0), p(a1, r0, f0), p(a1, r1, f1), p(a0, r1, f1), new THREE.Color(0.78 * sh, 0.98 * sh, 1.18 * sh), u0, v0, u1, v1);
       }
     }
     beacons.push([cx + ca * lean(1), cy + sa * lean(1), F.base + H + 1]);

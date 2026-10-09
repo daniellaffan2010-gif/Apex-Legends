@@ -1,3 +1,5 @@
+import { addKerbs } from './kerbs.js';
+import { addPitLane } from './pitlane.js';
 import { RAD, TAU, angWrap, clamp, dist, lerp, mulberry } from '../config/util.js';
 import { TEAMS } from '../config/teams.js';
 import { bankZ, ELEV_VISUAL } from './shared.js';
@@ -332,6 +334,8 @@ function buildTrack(def){
   T.inPitLane = (i, off) => { const r = T.pitRamp(i); if(r <= 0.03) return false;
     const o = off * T.pitSide; return o > T.half - 0.6 && o < T.half + T.pitW * r + 0.6; };
   T.inPitZone = i => T.pitU(i) >= 0;
+  // the limit, the lines, the two lanes and a box for every team (src/tracks/pitlane.js)
+  addPitLane(T);
 
   /* --- sectors + set dressing --------------------------------------------- */
   T.sec = [0, Math.round(n / 3), Math.round(2 * n / 3)];
@@ -465,16 +469,15 @@ function buildTrack(def){
   // biggest first: a bay goes down before the promenade that sits on its edge
   T.land.sort((a, b) => b.r - a.r);
 
-  // a garage for every team, strung along the lane in team colours
-  for(let q = -5; q <= 5; q++){
-    const bi = ((T.pitBox + q * (PD.gap || 16)) % T.n + T.n) % T.n;
-    if(T.pitRamp(bi) < 0.85) continue;
+  // a garage for every team, right behind its own box, in its own colours (the order is pitlane.js's)
+  for(const b of T.pitBoxes){
+    const f = b.f, i = Math.floor(f) % T.n, j = (i + 1) % T.n, u = f - Math.floor(f);
+    if(T.pitRamp(i) < 0.85) continue;
     const o = T.pitSide * (T.half + T.pitW + 7.0);
-    const gx2 = T.x[bi] + T.nx[bi] * o, gy2 = T.y[bi] + T.ny[bi] * o;
-    if(!clears(gx2, gy2, 13)) continue;
-    const team = TEAMS[(q + 5) % TEAMS.length];
-    T.props.push({ t:"garage", only2d:!!def.survey, x:gx2, y:gy2, z:T.z[bi], h:4.6,
-                   col:team.body, rot:T.ang[bi], r:0.5 });
+    const gx2 = T.x[i] + (T.x[j] - T.x[i]) * u + T.nx[i] * o, gy2 = T.y[i] + (T.y[j] - T.y[i]) * u + T.ny[i] * o;
+    if(!clears(gx2, gy2, 9)) continue;
+    T.props.push({ t:"garage", only2d:!!def.survey, x:gx2, y:gy2, z:T.z[i], h:4.6, w:13.6, team:b.id,
+                   col:b.team.body, rot:T.ang[i], r:0.5 });
   }
   /* Run-off, corner by corner.
      Most circuits are one number all the way round and stay that way. A street
@@ -541,6 +544,7 @@ function buildTrack(def){
     T.tecpro = (i, sd) => (sd >= 0 ? T.roR[i] : T.roL[i]) > base + 2.5;
   }
 
+  addKerbs(T);
   return T;
 }
 

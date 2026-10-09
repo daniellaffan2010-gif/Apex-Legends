@@ -2,6 +2,7 @@ import { TAU, clamp, shade } from '../config/util.js';
 import { CAR_SPEC } from '../car/spec.js';
 import { ISX, ISY, R } from './view.js';
 import { box, boxCol } from './props.js';
+import { stopPose } from '../car/pitstop.js';
 
 /* a box in world space with full orientation — yaw, plus the body roll and pitch
    of whichever car is being drawn, so a tumbling car reads properly */
@@ -14,14 +15,15 @@ function drawCar(ctx, c, T, S, isPlayer){
   const t = c.team, lean = clamp(c.steer * 0.05 + c.slide * 0.04, -0.09, 0.09);
   const L = (fx, fy) => [c.x + fx * ca - fy * sa, c.y + fx * sa + fy * ca];
 
-  // ---- pit stop: jacked up, wheels off, crew round the car ----
-  const stopping = c.stopT > 0 ? c.stopT : (c.pitT > 0 ? c.pitT : 0);
-  const stotal = (c.stopT > 0 ? c.stopTotal : c.pitStopTime) || 1;
-  let lift = 0, wheelOut = 0, sp = 0;
-  if(stopping > 0){
-    sp = clamp(1 - stopping / stotal, 0, 1);
-    lift = 0.30 * clamp(Math.min(sp / 0.10, (1 - sp) / 0.10), 0, 1);
-    wheelOut = 0.55 * clamp(Math.min((sp - 0.14) / 0.08, (0.86 - sp) / 0.08), 0, 1);
+  // ---- pit stop: jacked up, wheels off, crew round the car (the same timeline as the 3D stop, car/pitstop.js) ----
+  const st = c.pp && c.pp.phase === "stopped" ? c.pp.st : null;
+  let stopping = 0, stotal = 1, lift = 0, wheelOut = 0, sp = 0, green = false;
+  if(st){
+    const po = stopPose(st, R._po || (R._po = {}));
+    stotal = st.go + st.hold; stopping = Math.max(0.001, stotal - st.t); sp = clamp(st.t / stotal, 0, 1);
+    lift = 0.06 * Math.max(po.jackF, po.jackR);
+    wheelOut = [po.c0, po.c1, po.c2, po.c3].some(q => q >= 1 && q < 2) ? 0.55 : 0;
+    green = po.light > 0;
   }
 
   // shadow
@@ -139,7 +141,7 @@ function drawCar(ctx, c, T, S, isPlayer){
     }
     const [lx, ly] = R.P(c.x, c.y, c.z + 4.4);
     boxCol(ctx, ...L(0, 2.9), c.z, 0.26, 0.26, 4.2, ang, "#2C333B", sun, 0.2);
-    const green = stopping < 0.45;
+
     ctx.fillStyle = green ? "#2FD07A" : "#FF4B3E";
     ctx.beginPath(); ctx.arc(lx, ly, Math.max(2.6, R.zoom * 0.62), 0, TAU); ctx.fill();
     const glow = ctx.createRadialGradient(lx, ly, 0, lx, ly, R.zoom * 4);
@@ -150,7 +152,7 @@ function drawCar(ctx, c, T, S, isPlayer){
       ctx.font = "700 13px 'Roboto Mono',ui-monospace,monospace";
       ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
       ctx.fillStyle = "#E8EDF3";
-      ctx.fillText((stotal - stopping).toFixed(1) + "s", lx, ly - R.zoom * 1.6);
+      ctx.fillText(st.t.toFixed(1) + "s", lx, ly - R.zoom * 1.6);
     }
   }
 

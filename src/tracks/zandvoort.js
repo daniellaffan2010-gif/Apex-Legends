@@ -11,7 +11,7 @@ const zandvoort =
     world:"zandvoort", survey:true, path:() => ZGEO.pathRaw(), smooth:2,
     // the mapped Pitstraat: in on the main straight after Arie Luyendyk, along the
     // inside (east) of the straight and round the inside of Tarzan, out before Gerlach
-    pit:{ side:1, in:0.921, out:0.1065, box:0.006, width:7.6, gap:4 },
+    pit:{ side:1, in:0.921, out:0.1065, box:0.006, width:7.6, gap:4, limit:60 },            // 60 km/h, as at Monaco
     elev:u => ZGEO.elev(u),
     /* Hugenholtz and Arie Luyendyk are banked about 18-19 degrees, progressively:
        about 4 degrees at the inside, 0.335 (18.5 degrees) at the outside edge, rising

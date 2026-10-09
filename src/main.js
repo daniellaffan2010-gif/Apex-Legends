@@ -7,6 +7,7 @@ import './car/parts.js';
 import './car/spec.js';
 import './tracks/shared.js';
 import { TRACKS } from './tracks/index.js';
+import { openGarage } from './ui/garage-ui.js';
 import './tracks/monaco.js';
 import './tracks/singapore.js';
 import './tracks/vegas.js';
@@ -75,22 +76,45 @@ function boot(){
   document.querySelectorAll("[data-go]").forEach(b => b.onclick = () => {
     const g = b.dataset.go;
     if(g === "standings") return showStandings();
+    if(g === "garage") return openGarage();
     if(g === "champ"){ const c = champState();
       if(c.round >= TRACKS.length){ showStandings(); return; }
       CFG.trackId = TRACKS[c.round].id; buildSetup("champ"); return; }
     buildSetup(g === "tt" ? "tt" : "quick");
   });
   document.querySelectorAll("[data-back]").forEach(b => b.onclick = () => show("screen-title"));
+  /* Building the circuit and the field blocks the page, so the loading screen is put up first and given two
+     frames to paint; it comes down again once the session has drawn a couple of frames of its own. */
+  let loadingOn = false;
+  const withLoading = (what, start) => {
+    if(loadingOn) return;
+    loadingOn = true;
+    const def = TRACKS.find(t => t.id === CFG.trackId) || TRACKS[0];
+    $("#loading-b").textContent = def.name;
+    $("#loading-s").textContent = what + " · preparing the circuit…";
+    $("#loading").hidden = false;
+    const t0 = performance.now();
+    const done = () => { $("#loading").hidden = true; loadingOn = false; };
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      try{ start(); }
+      catch(e){ done(); throw e; }
+      // hold it for a beat so it never flashes, and until the new session has rendered two frames
+      const lift = () => requestAnimationFrame(() => requestAnimationFrame(done));
+      setTimeout(lift, Math.max(0, 700 - (performance.now() - t0)));
+    }));
+  };
   $("#go-race").onclick = () => {
-    if(CFG.mode === "champ"){ startChampWeekend(); }
-    else startSession(CFG.mode === "tt" ? "tt" : "race", null);
+    if(CFG.mode === "champ") withLoading("Qualifying", () => startChampWeekend());
+    else if(CFG.mode === "tt") withLoading("Time trial", () => startSession("tt", null));
+    else withLoading("Race", () => startSession("race", null));
   };
   const endBtn = el("button", "btn", "End run");
   endBtn.id = "pb-end";
   $("#pause .actions").insertBefore(endBtn, $("#pb-quit"));
   endBtn.onclick = () => { setPaused(false); $("#pause").hidden = true; endSession(); };
-  $("#pit-go").onclick = () => { if(S) closePitMenu(S); };
-  $("#pit-skip").onclick = () => { if(S){ S.player.pitPlan = { none:true, done:true, repairs:new Set() }; closePitMenu(S); } };
+  $("#pit-go").onclick = () => { if(S) closePitMenu(S, "box"); };
+  $("#pit-skip").onclick = () => { if(S) closePitMenu(S, "through"); };
+  $("#pit-out").onclick = () => { if(S) closePitMenu(S, "out"); };
   $("#pb-resume").onclick = togglePause;
   $("#pb-restart").onclick = () => { setPaused(false); $("#pause").hidden = true;
     startSession(S.mode, S.champ ? { grid:S.gridAbbr } : null); };

@@ -4,10 +4,12 @@ import { bankZ } from '../tracks/shared.js';
 import { spawn } from '../render2d/particles.js';
 import { AUDIO } from '../audio/audio.js';
 import { addDent, contactLocal, contactTorque, pushFx } from './damage.js';
+import { pilotStep, pilotEnd } from './pitpilot.js';
+import * as AERO from './aero.js';
+import { NEUTRAL } from './tune.js';
 
 /* ---------- 3. cars: physics --------------------------------------------- */
 const LAUNCH_LO = 0.52, LAUNCH_HI = 0.74;          // the rev window for a clean getaway
-const PIT_SPEED = 140 / 3.6;
 const VMAX = 92, ENGINE = 15.2, DRAG = 0.00128, BRAKE = 40, GRIP = 38.5, STEER_AUTH = 2.55;
 const SURF = { road:1, kerb:0.94, runoff:0.62, grass:0.48, sand:0.42, pit:1, tarmac:0.86, gravel:0.30, astro:0.60 };
 const GRADE_G = 9.81 * 0.5;                      // gravity along a slope, at half strength
@@ -43,6 +45,8 @@ class Car {
     this.ai = true; this.pace = 1; this.pos = idx + 1; this.gap = null; this.total = 0;
     this.aiOff = 0; this.aiTarget = 0; this.mistake = 0; this.kerbShake = 0; this.wallHit = 0;
     this.dents = []; this.dentVer = 0; this.wheelOff = -1; this.wheelOff2 = -1; this.lossT = 0; this.spinCool = 0; this.lastHit = null;
+    this.tow = 0; this.dirty = 0; this.wakeOf = null; this.wakeGap = null;      // slipstream and dirty air, see aero.js
+    this.su = NEUTRAL;                                                          // the garage setup's multipliers (tune.js); only the player's differ
   }
   /* ---------- crash dynamics ----------------------------------------------
      A wrecked car leaves the track model entirely and becomes a ballistic
@@ -236,6 +240,16 @@ class Car {
     }
     else S.toast(this.drv.last + " is out — " + this.retiredBy.toLowerCase());
   }
+  /* How hard the kerb under the outer wheels shakes the car (0 if there is none):
+     a painted kerb a little, a ridged one fully, the sausage behind it with a jolt.
+     The outer wheels run about 0.8 m out from the car's centre. src/tracks/kerbs.js */
+  kerbRattle(T, off){
+    const a = Math.abs(off) + 0.8 - T.half;
+    if(a < 0.05 || a > 2.1) return 0;
+    if(!T.kerbKind) return 1;
+    const k = T.kerbKind(this.node, off);
+    return k === 0 ? 0 : k === 1 ? 0.45 : (k === 3 && a > 1.55) ? 1.3 : 1;
+  }
   place(node, lateral){
     const T = this.T, i = ((node % T.n) + T.n) % T.n;
     this.x = T.x[i] + T.nx[i] * lateral; this.y = T.y[i] + T.ny[i] * lateral;
@@ -297,12 +311,13 @@ class Car {
     const surf = this.surface();
     const wetK = S.wet > 0 ? lerp(1, this.tyre.key === "wet" ? 0.93 : 0.68, S.wet) : 1;
     const tyreGrip = tyreGripK(this);
-    const g = GRIP * surf * wetK * tyreGrip * (1 - this.damage * 0.22) * this.pace * this.perf.grip;
+    const g = GRIP * surf * wetK * tyreGrip * (1 - this.damage * 0.22) * this.pace * this.perf.grip * AERO.gripK(this) * this.su.grip;
     const boosting = this.boost > 0 && this.batt > 0.01 && vf > 8 && this.perf.boost;
-    const vmax = VMAX * (boosting ? 1.055 : 1) * this.pace * this.perf.top;
+    const vmax = VMAX * (boosting ? 1.055 : 1) * this.pace * this.perf.top * AERO.topK(this) * this.su.top;
 
     // longitudinal
-    const eng = ENGINE * (boosting ? 1.10 : 1) * (1 - this.damage * 0.18) * surf * this.pace * this.perf.power * this.launchMul;
+    const eng = ENGINE * (boosting ? 1.10 : 1) * (1 - this.damage * 0.18) * surf * this.pace * this.perf.power * this.launchMul
+      * lerp(this.su.power, this.su.top, clamp(vf / 70, 0, 1));      // setup: pull off the line, then reach at speed (gearing trades one for the other)
     if(this.launchT > 0){
       this.launchT -= dt;
       if(this.launchT <= 0) this.launchMul = 1;
@@ -311,20 +326,22 @@ class Car {
               (Math.random() - 0.5) * 5, (Math.random() - 0.5) * 5, 0.6, 0.7, "#C6CBD1", 0.5, "smoke");
     }
     let af = this.thr * eng * Math.min(1, 0.55 + Math.abs(vf) / 25);
-    if(this.inPit && vf > PIT_SPEED) af = Math.min(af, -26);      // pit lane speed limiter
-    af -= this.brk * BRAKE * this.perf.brake * surf * wetK * (vf > 0.4 ? 1 : 0);
+    // the speed limit holds between the pit lane's two lines (the lane drives itself there; this is the backstop)
+    const limZone = this.inPit && T.pitInLimit && T.pitInLimit(this.s), plim = T.pitLimit || 22.2;
+    if(limZone && vf > plim) af = Math.min(af, -26);
+    af -= this.brk * BRAKE * this.perf.brake * this.su.brake * surf * wetK * (vf > 0.4 ? 1 : 0);
     if(this.brk > 0 && vf <= 0.4 && vf > -11) af -= this.brk * eng * 0.5;          // reverse
     // gravel digs in, and harder the faster you arrive, but a car can still crawl out of it (and off the grass:
     // its drag fades at a crawl, or a car that stopped there could never pull away again)
     const gravel = surf === SURF.gravel;
-    af -= Math.sign(vf) * (DRAG * vf * vf) + vf * 0.035 + (surf < 0.72 ? Math.sign(vf) * (gravel ? 1.4 : 6.5) * clamp(Math.abs(vf) / 10, 0.25, 1) : 0)
+    af -= Math.sign(vf) * (DRAG * AERO.dragK(this) * this.su.drag * vf * vf) + vf * 0.035 + (surf < 0.72 ? Math.sign(vf) * (gravel ? 1.4 : 6.5) * clamp(Math.abs(vf) / 10, 0.25, 1) : 0)
       + (gravel ? Math.sign(vf) * clamp((Math.abs(vf) - 5) / 6, 0, 1) * (9 + Math.abs(vf) * 0.32) : 0);
     // the hill: gravity along the road, at half strength so it is felt without
     // rebalancing the field — slower up Beau Rivage, quicker down to the hairpin
     af -= GRADE_G * T.grade(this.node) * Math.cos(this.h - T.ang[this.node]);
     vf += af * dt;
     if(vf > vmax) vf = lerp(vf, vmax, 1 - Math.pow(0.02, dt));
-    if(this.inPit && vf > PIT_SPEED) vf = Math.max(PIT_SPEED, vf - 30 * dt);
+    if(limZone && vf > plim) vf = Math.max(plim, vf - 30 * dt);
     if(this.thr === 0 && this.brk === 0 && Math.abs(vf) < 0.35) vf = 0;
 
     // yaw + lateral friction
@@ -353,7 +370,7 @@ class Car {
     if(!spinning && !this.dnf && this.spinCool <= 0){
       const spdNow = Math.hypot(vf, vs);
       const latDem = Math.abs(yaw * vf) / Math.max(g, 1);
-      const brkDem = this.brk * BRAKE * this.perf.brake * surf * wetK * (vf > 0.4 ? 1 : 0) / Math.max(g, 1);
+      const brkDem = this.brk * BRAKE * this.perf.brake * this.su.brake * this.su.stab * surf * wetK * (vf > 0.4 ? 1 : 0) / Math.max(g, 1);
       const use = Math.hypot(latDem, brkDem + this.thr * 0.12 * (spdNow < 30 ? 1.8 : 0.4));
       let over = use > 1.38 ? (use - 1.27) * 4.2 : 0;
       if(surf < 0.7 && spdNow > 55 && Math.abs(this.steer) > 0.65) over += (1 - surf) * 1.5 * Math.abs(this.steer);
@@ -455,15 +472,16 @@ class Car {
         this.wallHit = 1; if(!this.ai) S.shake = Math.min(1, S.shake + into * 0.03);
       }
     }
-    // kerb rattle
-    this.kerbShake = surf === SURF.kerb ? 1 : Math.max(0, this.kerbShake - dt * 4);
+    // kerb rattle: only where a kerb is drawn, and by its kind (the grip stays the kerb band's, as before)
+    const rattle = surf === SURF.kerb ? this.kerbRattle(T, this.off) : 0;
+    this.kerbShake = rattle > 0 ? rattle : Math.max(0, this.kerbShake - dt * 4);
 
     // battery + tyres
     if(boosting) this.batt = clamp(this.batt - dt * 0.30, 0, 1);
     else this.batt = clamp(this.batt + dt * (this.brk > 0.2 ? 0.20 : 0.035), 0, 1);
     const load = tyreLoad(Math.abs(yaw) * Math.abs(vf), this.brk) + Math.abs(vs) * 0.00055;
-    this.life = clamp(this.life - load * this.tyre.wear * S.wearMul * dt * 0.34, 0, 1);
-    this.temp = clamp(this.temp + (Math.abs(vs) * 0.02 + Math.abs(vf) * 0.004 - (this.temp - 0.35) * 0.55) * dt, 0, 1.2);
+    this.life = clamp(this.life - load * this.tyre.wear * S.wearMul * AERO.wearK(this) * this.su.wear * dt * 0.34, 0, 1);
+    this.temp = clamp(this.temp + (Math.abs(vs) * 0.02 + Math.abs(vf) * 0.004 + AERO.heat(this) + this.su.heat - (this.temp - 0.35) * 0.55) * dt, 0, 1.2);
   }
 
   /* Rivals follow the line with real speed dynamics: they brake, accelerate and
@@ -498,7 +516,7 @@ class Car {
     if(vt > v){
       // the same pull of the hill as the player feels, on the way up to speed
       const accCap = Math.max(1.4, ENGINE * this.pace * this.perf.power * (this.boost > 0 && this.batt > 0.02 && this.perf.boost ? 1.10 : 1) *
-        (1 - this.damage * 0.20) * Math.min(1, 0.55 + v / 25) - DRAG * v * v - v * 0.035 - GRADE_G * T.grade(i));
+        (1 - this.damage * 0.20) * Math.min(1, 0.55 + v / 25) - DRAG * AERO.dragK(this) * v * v - v * 0.035 - GRADE_G * T.grade(i));
       v = Math.min(vt, v + Math.min(accCap, (vt - v) * 3.2) * dt);
       this.brk = 0; this.thr = 1;
     } else if(v - vt < 0.8 && !(this.brk > 0.02)){
@@ -545,66 +563,31 @@ class Car {
     // wear, heat, battery — driven by how hard the corner is
     const lat = Math.abs(T.lcurv[j]) * v * v;
     this.slide = lerp(this.slide, clamp(lat / (GRIP * 1.05) - 0.72, 0, 1), 0.18);
-    this.kerbShake = Math.abs(off) > T.half - 0.8 ? 1 : Math.max(0, this.kerbShake - dt * 4);
+    const rattle = this.kerbRattle(T, off);
+    this.kerbShake = rattle > 0 ? rattle : Math.max(0, this.kerbShake - dt * 4);
     if(this.boost > 0 && this.batt > 0.01) this.batt = clamp(this.batt - dt * 0.30, 0, 1);
     else this.batt = clamp(this.batt + dt * (this.brk > 0.2 ? 0.20 : 0.035), 0, 1);
     const load = tyreLoad(lat, this.brk);
-    this.life = clamp(this.life - load * this.tyre.wear * S.wearMul * dt * 0.34, 0, 1);
-    this.temp = clamp(this.temp + (lat * 0.0016 + v * 0.004 - (this.temp - 0.35) * 0.55) * dt, 0, 1.2);
+    this.life = clamp(this.life - load * this.tyre.wear * S.wearMul * AERO.wearK(this) * this.su.wear * dt * 0.34, 0, 1);
+    this.temp = clamp(this.temp + (lat * 0.0016 + v * 0.004 + AERO.heat(this) + this.su.heat - (this.temp - 0.35) * 0.55) * dt, 0, 1.2);
   }
 
+  /* In the pit lane every car is driven by car/pitpilot.js; when it lets go, the car goes
+     back to its rail (a rival) or to the driver (the player), at the speed it had. */
   pitStep(dt, S){
-    const T = this.T, i = this.node;
-    // rails: advance along the pit lane, hold the box, then rejoin
-    if(this.pitV == null) this.pitV = clamp(this.speed || 22, 22, 90);
-    if(this.pitS == null) this.pitS = i;
-    let bd = ((T.pitBox - this.pitS) % T.n + T.n) % T.n;
-    const boxDist = (bd > T.n / 2 ? 0 : bd) * T.ds;        // metres to the service box, 0 once past it
-    let v = this.pitV;
-    if(this.pitT > 0){ v = this.pitV = 0; this.pitT -= dt;
-      if(this.pitT <= 0 && this.servePen){ /* a stop-and-go: nothing is touched */ }
-      else if(this.pitT <= 0){ this.tyre = this.nextTyre || TYRES.medium; this.used.add(this.tyre.key);
-        this.life = 1; this.temp = 0.45; this.stops++; this.wearRate = null; this.lifeAtLap = null; if(!this.ai) S.toast((this.repaired && this.repaired.length ? this.repaired.join(" + ") + " replaced · " : this.tyre.name + " tyres · ") + this.pitStopTime.toFixed(1) + "s");
-        this.repaired = null; } }
-    else if(this.pitDone){                                    // released: pull away up to the limiter
-      this.pitV = v = Math.min(22, this.pitV + 15 * dt);
-    }
-    else if(boxDist < 0.3){
-      this.pitDone = true;
-      try{ AUDIO.event("pitstop", this, S); }catch(e){}
-      let extra = 0, fixed = [];
-      if(this.servePen){                                       // a penalty visit: no work allowed
-        if(this.servePen === "dt"){ this.pitT = 0; v = this.pitV = 22; }
-        else { this.pitStopTime = 10; this.pitT = 10; v = this.pitV = 0; }
-      } else {
-      for(const k of this.broken){ if(PARTS[k].tyre){ fixed.push(k); continue; }
-        extra += PARTS[k].fix; fixed.push(k); }
-      this.repaired = fixed.map(k => PARTS[k].name);
-      this.broken.clear(); this.recalcPerf(); this.wheelOff = this.wheelOff2 = -1;
-      this.damage = Math.max(0, this.damage - 0.5);
-      this.pitStopTime = 2.1 + Math.random() * 1.4 + (this.ai ? Math.random() * 0.6 : 0) + extra;
-      this.pitT = this.pitStopTime; v = this.pitV = 0;
-      }
-    }
-    else {                                                    // rolling up to the box: limiter, then brake to stop on the mark
-      const target = Math.min(22, Math.max(1.4, Math.sqrt(2 * 9 * boxDist)));
-      this.pitV = v = this.pitV > target ? Math.max(target, this.pitV - 30 * dt) : Math.min(target, this.pitV + 12 * dt);
-    }
-    this.pitS = (this.pitS == null ? i : this.pitS) + (v * dt) / T.ds;
-    const f = this.pitS, j = ((Math.floor(f) % T.n) + T.n) % T.n, k2 = (j + 1) % T.n, u = f - Math.floor(f);
-    this.node = j;
-    const lat = T.pitCentre(j);
-    this.x = lerp(T.x[j], T.x[k2], u) + lerp(T.nx[j], T.nx[k2], u) * lat;
-    this.y = lerp(T.y[j], T.y[k2], u) + lerp(T.ny[j], T.ny[k2], u) * lat;
-    this.z = lerp(T.z[j], T.z[k2], u);
-    this.h = T.ang[j] + angWrap(T.ang[k2] - T.ang[j]) * u;
-    this.off = lat; this.s = T.s[j]; this.inPit = true;
-    this.vx = Math.cos(this.h) * v; this.vy = Math.sin(this.h) * v;
-    if(this.pitT <= 0 && this.pitDone && T.pitRamp(j) <= 0.04){
-      this.pitting = 0; this.pitDone = false; this.pitS = null; this.pitV = null; this.pitReq = false; this.inPit = false;
-      if(this.servePen) this.penServedFlag = true;
-    }
+    if(!this.pp){ this.pitting = 0; return; }
+    const done = pilotStep(this, S, dt, S.pitHooks);
+    if(done){ const P = this.pp; pilotEnd(this, S); if(S.pitHooks && S.pitHooks.ended) S.pitHooks.ended(this, S, P); }
   }
 }
 
-export { BRAKE, Car, DRAG, GRIP, LAUNCH_HI, LAUNCH_LO, VMAX, tyreGripK, tyreLoad };
+// the engine's revs from the road speed, through eight gears 42 km/h apart (the HUD's tacho and the wheel's shift lights);
+// the garage's gearing slider stretches the gears, so a long box spreads the same eight over more road
+const GEAR_KPH = 42;
+function gearOf(c){ return clamp(Math.ceil(c.speed * 3.6 / (GEAR_KPH * c.su.gearSpan)), 1, 8); }
+function rpmOfCar(c){
+  const span = GEAR_KPH * c.su.gearSpan, kph = c.speed * 3.6, gear = clamp(Math.ceil(kph / span), 1, 8);
+  return 4200 + clamp((kph - (gear - 1) * span) / span, 0, 1) * 9200;
+}
+
+export { BRAKE, Car, DRAG, GRIP, LAUNCH_HI, LAUNCH_LO, VMAX, gearOf, rpmOfCar, tyreGripK, tyreLoad };

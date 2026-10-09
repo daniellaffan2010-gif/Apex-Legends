@@ -14,7 +14,7 @@ const monaco =
     camber:u => 0.045 * bumpU(u, 0.262, 0.016),
     // the pit lane, from the mapped "Voie des stands": off at Antony Noghes, on
     // the harbour side, and back out after Sainte-Devote
-    pit:{ side:1, in:0.894, out:0.079, box:0.968 },
+    pit:{ side:1, in:0.894, out:0.079, box:0.968, limit:60, limitLen:340 },               // 60 km/h down a short lane
     // Boulevard Louis II, where OpenStreetMap tags it as tunnel
     tunnel:[0.425, 0.563],
     /* Run-off, corner by corner. Monaco is walls almost everywhere; these are the

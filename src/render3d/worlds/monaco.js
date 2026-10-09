@@ -1993,13 +1993,13 @@ const MONACO = {
     if(this.timeU) this.timeU.value = this.t;
     for(const f of this.anim) f(this.t, this.fno);
     // the tunnel: fade it (and the Fairmont) for the player's car, in the
-    // overhead camera only, eased over about a third of a second
+    // overhead camera only (never from the cockpit), eased over about a third of a second
     const p = S.player; if(!p || !this.tunnelRange) return;
     const [a, b] = this.tunnelRange, n = T.n;
     const i = p.node, inside = T.inTunnel(i);
     const before = ((a - i) % n + n) % n * T.ds, after = ((i - b) % n + n) % n * T.ds;
     const nearIt = inside || before < 40 || after < 25;
-    const want = (nearIt && !R.tv) ? 0.12 : 1;
+    const want = (nearIt && !R.tv && G.cam !== G.camFP) ? 0.12 : 1;
     const k = 1 - Math.pow(0.0005, dt);
     this.fadeV = this.fadeV == null ? 1 : this.fadeV + (want - this.fadeV) * k;
     G.fadeU.value = this.fadeV;

@@ -1,15 +1,15 @@
 import { showMsg, showToast } from '../ui/screens.js';
 import { AUDIO } from '../audio/audio.js';
+import { aiProfile } from '../ai/driver.js';
 
 /* ---------- the stewards ----------
    Every penalty in the book that this game can see:
      warning · reprimand · 5 s · 10 s · drive-through · 10 s stop-and-go · disqualification
-     grid-place drops · deleted laps (qualifying) · track-limit strikes (white, then black-and-white flag)
+     grid-place drops · deleted laps (qualifying) · track limits (judged on the time an excursion gained)
    Drive-throughs and stop-and-gos are served in the pit lane within three laps; whatever is
    still owed at the flag, or can no longer be served, turns into time (20 s / 30 s).
    The player hears about their own through the message and the radio; the AI's arrive as steward notices. */
 
-const PIT_LIMIT = 140 / 3.6;
 const K = {
   warn: { name:"Warning", pts:0 },
   rep:  { name:"Reprimand", pts:0 },
@@ -21,8 +21,8 @@ const K = {
 };
 
 function st(c){
-  return c.pen || (c.pen = { time:0, todo:[], strikes:0, reps:0, points:0, dsq:false, cool:-99, n:0,
-                             exT:0, inEx:false, exPos:0, blueT:0, blueSaid:false, lane:false, laneT:0, laneSpeed:false });
+  return c.pen || (c.pen = { time:0, todo:[], reps:0, points:0, dsq:false, dsqReason:"", cool:-99, n:0,
+                             exT:0, inEx:false, exVoid:false, exClock:0, exS:0, exV:0, blueT:0, blueSaid:false, lane:false, laneT:0, laneSpeed:false });
 }
 
 /* steward notices queue up, so two in a row are both read */
@@ -46,18 +46,18 @@ function issue(S, c, kind, reason, opts){
   if(kind === "rep"){ p.reps++; if(p.reps >= 3){ kind = "dt"; reason = "Third reprimand — " + reason.toLowerCase(); } }
   const k = K[kind];
   p.n++; p.points += k.pts || 0;
-  let line = k.name, small = reason;
+  let line = k.name, small = reason, sec = 0, conv = 0;
   if(kind === "dt" || kind === "sg"){
     if(S.mode !== "race" || c.finished || c.lap >= S.laps){
-      p.time += k.conv; line = k.name + " → +" + k.conv + " s (no time left to serve it)";
+      p.time += k.conv; sec = k.conv; line = k.name + " → +" + k.conv + " s (no time left to serve it)";
       small = reason + " · +" + k.conv + " s on your race time";
     } else {
-      p.todo.push({ kind, by:c.lap + 3 });
+      p.todo.push({ kind, by:c.lap + 3 }); conv = k.conv;
       small = reason + (me ? " · pit (P) within 3 laps" : "");
     }
-  } else if(k.sec) p.time += k.sec;
-  else if(kind === "dsq") p.dsq = true;
-  (S.penLog || (S.penLog = [])).push({ lap:Math.max(1, c.lap), abbr:c.drv.abbr, last:c.drv.last, me, text:line, reason });
+  } else if(k.sec){ p.time += k.sec; sec = k.sec; p.serve = (p.serve || 0) + k.sec; }    // a time penalty can be served at the next stop
+  else if(kind === "dsq"){ p.dsq = true; p.dsqReason = reason; }
+  (S.penLog || (S.penLog = [])).push({ lap:Math.max(1, c.lap), abbr:c.drv.abbr, last:c.drv.last, me, text:line, reason, sec, conv, kind });
   if(me){
     if(kind === "warn") showMsg("WARNING", reason, 2.8);
     else if(kind === "rep") showMsg("REPRIMAND", reason, 3);
@@ -137,6 +137,7 @@ function served(S, c, kind){
   const p = st(c), i = p.todo.findIndex(t => t.kind === kind);
   if(i < 0) return;
   p.todo.splice(i, 1);
+  for(let j = (S.penLog || []).length - 1; j >= 0; j--){ const e = S.penLog[j]; if(e.kind === kind && e.me === (c === S.player) && e.abbr === c.drv.abbr && e.conv && !e.served){ e.served = true; break; } }
   (S.penLog || (S.penLog = [])).push({ lap:Math.max(1, c.lap), abbr:c.drv.abbr, last:c.drv.last, me:c === S.player,
                                        text:K[kind].name + " served", reason:"" });
   if(c === S.player){ showMsg("PENALTY SERVED", "Back to racing", 2.2); radio("Penalty served. Push."); }
@@ -144,56 +145,67 @@ function served(S, c, kind){
 }
 
 /* ---- the running checks ---- */
+/* Track limits are judged on time, not on the white line. When a car goes out the stewards note the clock, its
+   distance round the lap and its speed; when it rejoins they work out how long a racing-speed car (the AI's own
+   speed profile, accelerating from the entry speed) would have taken over that same stretch and compare it with
+   the time the car actually took. Only a car that came back quicker than that gained an advantage and is punished
+   (race: +5 s) or has the lap deleted (qualifying). A spin, a wreck, the pit lane or crawling speed voids it. */
+const ACC = 12, LIM_GAIN = 0.2;
+function refTime(T, s0, dist, v0){
+  const V = aiProfile(T), n = T.n; let t = 0, x = 0;
+  while(x < dist){
+    const dx = Math.min(T.ds, dist - x);
+    const i = Math.floor((((s0 + x) % T.length) + T.length) % T.length / T.ds) % n;
+    const v = Math.max(8, Math.min(V[i], Math.sqrt(v0 * v0 + 2 * ACC * x)));
+    t += dx / v; x += dx;
+  }
+  return t;
+}
 function limits(S, c, dt){
   const T = S.track, p = st(c);
   const off = Math.abs(c.off);
   const out = off > T.half + 1.9 && !c.inPit && !c.pitting;
   const free = c.spinT > 0 || c.wrecked || c.speed < 22;
-  if(out && !free){
+  if(out){
+    if(p.exT === 0){ p.exClock = S.clock; p.exS = c.lap * T.length + c.s; p.exV = c.speed; p.exVoid = free; }
+    else if(free) p.exVoid = true;
     p.exT += dt;
-    if(!p.inEx && p.exT > 0.3){
-      p.inEx = true; p.exPos = c.pos;
-      if(S.mode === "qualy"){
-        if(!c.lapInvalid && c.lapStart != null){
-          c.lapInvalid = true;
-          if(c === S.player) showMsg("LAP DELETED", "Track limits — that one will not count", 2.6);
-        }
-      } else if(S.mode === "race"){
-        p.strikes++;
-        if(p.strikes === 1 || p.strikes === 2){
-          if(c === S.player) issue(S, c, "warn", "Track limits — warning " + p.strikes + " of 3");
-        } else if(p.strikes === 3){
-          if(c === S.player) showMsg("BLACK & WHITE FLAG", "Track limits — the next one is five seconds", 3.2);
-          else if(S.player && Math.abs(c.pos - S.player.pos) <= 3) notify(S, "Black and white flag for " + c.drv.last + " — track limits", 3);
-          if(c === S.player) radio("Track limits. That is the black and white flag, no more.");
-        } else issue(S, c, "t5", "Track limits — repeated offences");
-      }
-    }
+    if(p.exT > 0.3) p.inEx = true;
   } else if(off < T.half + 0.6){
-    if(p.inEx && S.mode === "race" && c.pos < p.exPos && c.lap >= 1 && c.spinT <= 0 && Math.random() < 0.8)
-      issue(S, c, "t5", "Leaving the track and gaining an advantage");
-    p.inEx = false; p.exT = 0;
+    const race = S.mode === "race";
+    if(p.inEx && !p.exVoid && !c.inPit && !c.pitting && (race || S.mode === "qualy") && c.lap >= (race ? 1 : 0)){
+      const dist = c.lap * T.length + c.s - p.exS, took = S.clock - p.exClock;
+      const gain = dist > 5 && dist < T.length * 0.5 ? refTime(T, p.exS, dist, p.exV) - took : 0;
+      const me = c === S.player;
+      if(gain >= LIM_GAIN){
+        if(!race){
+          if(!c.lapInvalid && c.lapStart != null){
+            c.lapInvalid = true;
+            if(me) showMsg("LAP DELETED", "Track limits — gained " + gain.toFixed(1) + " s, that one will not count", 2.8);
+          }
+        } else issue(S, c, "t5", "Leaving the track and gaining an advantage (" + gain.toFixed(1) + " s)");
+      } else if(me && race) notify(S, "Track limits — no advantage gained, no penalty", 2.6);
+    }
+    p.inEx = false; p.exT = 0; p.exVoid = false;
   }
 }
 
+/* The pit lane's own offences are called where they happen: speeding at the speed-limit
+   line (car/pit.js) and an unsafe release from the box (car/pitpilot.js through session.js). */
 function pitLane(S, c, dt){
   const p = st(c);
-  const lane = !!(c.pitting || c.inPit);
-  if(c.inPit && !c.pitting && c.stopT <= 0){
-    p.laneT += dt;
-    if(c.speed > PIT_LIMIT + 2.5 && p.laneT > 2.6 && !p.laneSpeed){
-      p.laneSpeed = true; issue(S, c, "t5", "Speeding in the pit lane");
-    }
-  }
-  if(p.lane && !lane){
-    // rolled out of the pit lane: an unsafe release if a car is right there
-    if(c.speed > 5 && Math.random() < 0.12){
-      const near = S.cars.some(o => o !== c && !o.dnf && !o.pitting && !o.inPit && Math.hypot(o.x - c.x, o.y - c.y) < 26);
-      if(near) issue(S, c, "t5", "Unsafe release — a car was released into traffic");
-    }
-    p.laneT = 0; p.laneSpeed = false;
-  }
-  p.lane = lane;
+  p.lane = !!(c.pitting || c.inPit);
+}
+/* A stop serves any time penalty owed: the car waits that long before anyone touches it,
+   and the seconds come off what will be added to its race time. Returns the wait. */
+function serveAtStop(S, c){
+  const p = st(c), w = p.serve || 0;
+  if(w <= 0) return 0;
+  p.serve = 0; p.time = Math.max(0, p.time - w);
+  (S.penLog || (S.penLog = [])).push({ lap:Math.max(1, c.lap), abbr:c.drv.abbr, last:c.drv.last, me:c === S.player,
+                                       text:w + " s penalty served at the stop", reason:"" });
+  if(c === S.player){ showMsg("SERVING " + w + " SECONDS", "Hands off until the time is up", 2.2); }
+  return w;
 }
 
 function blue(S, c, dt){
@@ -225,9 +237,8 @@ function aiIncident(S, c, dt){
   const nb = S.cars.filter(o => o !== c && !o.dnf && Math.abs(o.pos - c.pos) === 1);
   const o = nb.length ? nb[(Math.random() * nb.length) | 0] : null;
   const r = Math.random();
-  if(r < 0.28) issue(S, c, "t5", o ? "Forcing " + o.drv.last + " off the track" : "Forcing another driver off the track");
-  else if(r < 0.50) issue(S, c, "t5", "Leaving the track and gaining an advantage");
-  else if(r < 0.64) issue(S, c, "t5", o ? "Causing a collision with " + o.drv.last : "Causing a collision");
+  if(r < 0.34) issue(S, c, "t5", o ? "Forcing " + o.drv.last + " off the track" : "Forcing another driver off the track");
+  else if(r < 0.60) issue(S, c, "t5", o ? "Causing a collision with " + o.drv.last : "Causing a collision");
   else if(r < 0.76) issue(S, c, "t5", "Illegal defending — moving under braking");
   else if(r < 0.86) issue(S, c, "rep", "Driving with a lack of care");
   else if(r < 0.95) issue(S, c, "dt", "Dangerous driving");
@@ -295,9 +306,8 @@ function hudLine(S, c){
   const out = [];
   if(p.time) out.push("+" + p.time + " s");
   for(const t of p.todo) out.push((t.kind === "dt" ? "DRIVE-THROUGH" : "STOP-GO 10 s") + " · by lap " + Math.min(t.by, S.laps));
-  if(p.strikes && S.mode === "race") out.push("LIMITS " + Math.min(p.strikes, 3) + "/3" + (p.strikes >= 3 ? " ⚑" : ""));
   if(p.points) out.push(p.points + " pts");
   return out.join("  ·  ");
 }
 
-export { K, announceGrid, classify, contact, gridDrops, hudLine, issue, launch, nextServe, notify, owed, served, st, tick };
+export { K, announceGrid, classify, contact, gridDrops, hudLine, issue, launch, nextServe, notify, owed, served, serveAtStop, st, tick };

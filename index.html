@@ -23,10 +23,23 @@
       <div class="cond" id="h-cond" hidden></div>
       <div class="penline" id="h-pen" hidden></div>
       <div class="scline" id="h-sc" hidden></div>
+      <div class="aeroline" id="h-aero" hidden></div>
     </div>
     <div class="h-tr" id="h-board"></div>
     <div class="h-bl">
-      <div class="tyre"><div class="cmp" id="h-cmp">S</div><div class="meter"><i id="h-wear" style="width:100%"></i></div></div>
+      <div class="tyre" id="h-tyre"><svg class="tw" viewBox="0 0 40 40" width="38" height="38" aria-hidden="true">
+        <circle cx="20" cy="20" r="18" fill="#0C0E11"/>
+        <circle class="tw-ring" cx="20" cy="20" r="11.5" fill="none" stroke-width="4.5"/>
+        <circle class="tw-fade" cx="20" cy="20" r="11.5" fill="none" stroke="#6A7077" stroke-width="4.5"/>
+        <circle cx="20" cy="20" r="15.5" fill="none" stroke="#15181D" stroke-width="5"/>
+        <circle class="tw-scuff" cx="20" cy="20" r="15.5" fill="none" stroke="#5B6066" stroke-width="5"/>
+        <circle class="tw-grain" cx="20" cy="20" r="15.5" fill="none" stroke="#9AA0A6" stroke-width="5" stroke-dasharray="0.8 2.2"/>
+        <circle class="tw-marb" cx="20" cy="20" r="15.5" fill="none" stroke="#050505" stroke-width="3.2" stroke-linecap="round" stroke-dasharray="0.1 7.4"/>
+        <circle class="tw-heat" cx="20" cy="20" r="15.5" fill="none" stroke="#FF6A2A" stroke-width="5"/>
+        <circle class="tw-cords" cx="20" cy="20" r="15.5" fill="none" stroke="#CFC4A4" stroke-width="5" stroke-dasharray="1.1 1.5"/>
+        <circle cx="20" cy="20" r="7.5" fill="#15181D"/>
+        <text class="tw-lbl" id="h-cmp" x="20" y="23.6" text-anchor="middle" font-size="10.5" font-weight="800">S</text>
+      </svg><div class="wstage" id="h-wstage">New</div><div class="meter"><i id="h-wear" style="width:100%"></i></div></div>
       <div class="dmgbox" id="h-dmg" hidden><div class="k">Car damage</div>
         <div class="meter"><i id="h-dmgbar" style="width:0%"></i></div>
         <div class="chips" id="h-chips"></div></div>
@@ -73,6 +86,7 @@
     <div class="tpad" id="t-l">◄</div><div class="tpad" id="t-r">►</div>
     <div class="tpad" id="t-brk">BRK</div><div class="tpad" id="t-gas">GAS</div>
     <div class="tpad" id="t-boost">OVR</div>
+    <div class="tpad" id="t-cam">CAM</div>
   </div>
   <div id="toast"></div>
 
@@ -84,19 +98,24 @@
     <div id="cine-fade"></div>
   </div>
 
+  <div id="loading" hidden><div class="big" id="loading-b">Loading</div><div class="small" id="loading-s">Preparing the circuit…</div><div class="bar"><i></i></div></div>
+
+  <div id="simrest" hidden><div class="big">Race continues</div><div class="small">Simulating the rest of the race…</div><div class="bar"><i></i></div></div>
+
   <!-- ============ PIT MENU ============ -->
   <div id="pitmenu" hidden>
     <div class="pbox">
       <h3>Pit stop</h3>
-      <p id="pit-sub">Choose your service — the crew are waiting</p>
+      <p id="pit-sub">Choose your service — the crew will be ready</p>
       <span class="eyebrow" style="display:block;margin-bottom:7px">Tyres</span>
       <div class="seg" id="pit-tyres"></div>
       <span class="eyebrow" style="display:block;margin:15px 0 7px">Repairs</span>
       <div id="pit-repairs"></div>
       <div class="pit-total"><span>Stationary time</span><b id="pit-time">2.4s</b></div>
       <div class="actions">
-        <button class="btn primary" id="pit-go" style="flex:1">Box now</button>
+        <button class="btn primary" id="pit-go" style="flex:1">Box this lap</button>
         <button class="btn ghost" id="pit-skip">Drive through</button>
+        <button class="btn ghost" id="pit-out">Stay out</button>
       </div>
     </div>
   </div>
@@ -115,6 +134,7 @@
         <b>P</b><span>Call for the pits — the lane is closed until you do</span>
         <b>R</b><span>Recover car to track</span>
         <b>T</b><span>Broadcast cameras on / off</span>
+        <b>C</b><span>Overhead / cockpit view</span>
         <b>M</b><span>Mute / unmute sound</span>
         <b>Esc</b><span>Pause</span>
         <b>Pit lane</b><span>Drive in off the main straight · limiter holds 140 km/h</span>
@@ -137,6 +157,7 @@
         <button class="btn primary" data-go="quick">Quick race<small>Pick a grid slot and go</small></button>
         <button class="btn" data-go="champ">Championship<small id="m-champ">12 rounds · qualifying + race</small></button>
         <button class="btn" data-go="tt">Time trial<small>Empty track, chase the ghost</small></button>
+        <button class="btn" data-go="garage">Garage<small>Car setups &amp; lap telemetry</small></button>
         <button class="btn ghost" data-go="standings">Standings &amp; records</button>
       </div>
       <div class="strip" id="title-strip"></div>
@@ -177,9 +198,41 @@
           <div class="actions">
             <button class="btn primary" id="go-race" style="flex:1">Head out</button>
           </div>
-          <p class="foot">Races of ten laps or more carry the <b>two-compound rule</b>: you must run at least two different tyre compounds or you are classified last. The pit window opens on the main straight — press <b>P</b> as you approach.</p>
+          <p class="foot">Races of ten laps or more carry a <b>mandatory pit stop</b>: you must come into the pits at least once (any tyres will do) or you are classified last. The pit window opens on the main straight — press <b>P</b> as you approach.</p>
         </div>
       </div>
+    </div>
+  </section>
+
+  <!-- ============ GARAGE ============ -->
+  <section class="screen" id="screen-garage" hidden>
+    <div class="wrap">
+      <div class="topbar">
+        <div class="mark">The <i>garage</i></div>
+        <div class="sub">Car setups · lap telemetry</div>
+        <div style="flex:1"></div>
+        <button class="btn ghost" data-back>← Back</button>
+      </div>
+      <div class="cols">
+        <div>
+          <div class="field"><span class="eyebrow">Saved setups</span><div class="gsets" id="g-sets"></div>
+            <div class="actions"><button class="btn" id="g-add">New setup</button><button class="btn ghost" id="g-dup">Duplicate</button><button class="btn ghost" id="g-del">Delete</button></div></div>
+          <div class="field"><span class="eyebrow">Name</span><input id="g-name" class="ginput" maxlength="18" autocomplete="off"></div>
+          <div class="field"><span class="eyebrow">Settings</span><div id="g-sliders"></div>
+            <div class="actions"><button class="btn ghost" id="g-reset">Reset to standard</button></div></div>
+          <div class="field"><span class="eyebrow">What it does to the car</span><div class="gfx" id="g-fx"></div></div>
+        </div>
+        <div>
+          <div class="field"><span class="eyebrow">Circuit</span><select id="g-track" class="ginput"></select></div>
+          <div class="field"><span class="eyebrow">Telemetry · best lap vs last lap</span>
+            <canvas id="g-chart" class="gchart" width="520" height="300"></canvas>
+            <div class="glegend"><span><i style="background:var(--purple)"></i>Best</span><span><i style="background:var(--amber)"></i>Last</span><span class="dim">Speed · throttle · brake</span></div></div>
+          <div class="field"><span class="eyebrow">Engineer</span><p class="gnote" id="g-note"></p><div class="gstats" id="g-stats"></div></div>
+          <div class="field"><span class="eyebrow">Best lap by setup</span><div class="gby" id="g-by"></div>
+            <div class="actions"><button class="btn ghost" id="g-clear">Clear this circuit's data</button></div></div>
+        </div>
+      </div>
+      <p class="foot">The fitted setup applies to <b>your car only</b>, in every mode. Every slider trades one thing for another: downforce costs top speed, a long gearbox costs pull, forward brake bias costs stopping force, hard tyres cost grip. Clean laps are recorded automatically; pit and recovery laps and laps with cut corners are not.</p>
     </div>
   </section>
 

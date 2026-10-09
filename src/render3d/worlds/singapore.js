@@ -191,8 +191,8 @@ const SINGAPORE = {
         const top = rows * rowH + 4.4;
         for(let k = 0; k < span; k++){
           const ia = (i0 + k) % n, ib = (i0 + k + 1) % n, m = TW.get("solid", ...at(ia, side, off0 + depth / 2)), za = zb[k] + top, zn = zb[k + 1] + top, f0 = off0 - 2.5, f1 = off0 + depth + 2.5;
-          m.quad(pt(ia, side, f0, za), pt(ib, side, f0, zn), pt(ib, side, f1, zn + 0.8), pt(ia, side, f1, za + 0.8), L("#C8CCD8"));
-          m.quad(pt(ia, side, f0, za - 0.5), pt(ib, side, f0, zn - 0.5), pt(ib, side, f1, zn + 0.3), pt(ia, side, f1, za + 0.3), shadeC("#C8CCD8", -0.4));
+          m.quad(pt(ia, side, f0, za), pt(ib, side, f0, zn), pt(ib, side, f1, zn + 0.8), pt(ia, side, f1, za + 0.8), L("#6C7088"));
+          m.quad(pt(ia, side, f0, za - 0.5), pt(ib, side, f0, zn - 0.5), pt(ib, side, f1, zn + 0.3), pt(ia, side, f1, za + 0.3), shadeC("#6C7088", -0.4));
           TW.get("bright", ...at(ia, side, f0)).quad(pt(ia, side, f0 + 0.2, za - 0.55), pt(ib, side, f0 + 0.2, zn - 0.55), pt(ib, side, f0 + 0.2, zn - 0.3), pt(ia, side, f0 + 0.2, za - 0.3), L(seat));
           if(k % 5 === 0){ const fa = at(ia, side, f0 + 1.2); m.pole(fa[0], fa[1], zb[k] - 0.5, fa[0], fa[1], za - 0.5, 0.18, L("#7A7E8E")); }
         }
@@ -329,7 +329,7 @@ const SINGAPORE = {
         m.box(s2.x - ca * 40, s2.y - sa * 40, WATER_Y + 6, 14, 12, 14, s2.ang, L("#E8EAF2")); br.box(s2.x - ca * 40, s2.y - sa * 40, WATER_Y + 16, 14.2, 12.2, 1.2, s2.ang, L("#FF4A4A"));
         for(let c = 0; c < 18; c++) m.box(s2.x - ca * (40 - c * 4), s2.y - sa * (40 - c * 4), WATER_Y + 5.6, 3, 8, 4, s2.ang, L(["#D8352A", "#2B6CD8", "#F2C230", "#2E9A5A"][c & 3])); }
       sm.emit(g, { solid:this.cityMats.solid, bright:this.cityMats.bright }, false); }
-    // fireworks over the bay now and then, and a helicopter with strobes
+    // fireworks over the bay now and then, and a helicopter with steady red and white lights
     { const NP = 90, pg = new THREE.BufferGeometry(), pos = new Float32Array(NP * 3), cl = new Float32Array(NP * 3);
       pg.setAttribute("position", new THREE.BufferAttribute(pos, 3)); pg.setAttribute("color", new THREE.BufferAttribute(cl, 3));
       const pts = new THREE.Points(pg, new THREE.PointsMaterial({ size:6, sizeAttenuation:false, vertexColors:true, transparent:true, opacity:1, depthWrite:false, blending:THREE.AdditiveBlending, fog:false }));
@@ -361,7 +361,7 @@ const SINGAPORE = {
     const tex = dotTex(0, [[0, "rgba(255,255,255,1)"], [0.18, "rgba(255,240,210,0.7)"], [0.5, "rgba(255,200,140,0.18)"], [1, "rgba(255,160,100,0)"]]);
     const pts = new THREE.Points(geo, new THREE.PointsMaterial({ map:tex, size:lite ? 12 : 17, sizeAttenuation:false, vertexColors:true, transparent:true, blending:THREE.AdditiveBlending, depthWrite:false, fog:false }));
     pts.frustumCulled = false; pts.userData.dynamic = true; g.add(pts); this.glowPts = pts;
-    // red aviation lights on the roofs, in two groups that blink in turn
+    // red aviation lights on the roofs, in two groups, both burning steady
     const bp = [[], []]; this.beacons.forEach((b, k) => bp[k & 1].push(b[0], b[2], b[1]));
     this.blink = bp.map(arr => { const bg = new THREE.BufferGeometry(); bg.setAttribute("position", new THREE.Float32BufferAttribute(arr, 3));
       const o = new THREE.Points(bg, new THREE.PointsMaterial({ map:dotTex(0, [[0, "rgba(255,80,60,1)"], [0.3, "rgba(255,60,40,0.6)"], [1, "rgba(255,40,30,0)"]]), size:9, sizeAttenuation:false, color:0xFFFFFF, transparent:true, blending:THREE.AdditiveBlending, depthWrite:false, fog:false }));
@@ -396,7 +396,7 @@ const SINGAPORE = {
       for(let k = 0; k < N2; k++){ const az = r() * TAU, el = 0.12 + r() * 1.35, R2 = 4100; sp[k * 3] = Math.cos(az) * Math.cos(el) * R2; sp[k * 3 + 1] = Math.sin(el) * R2; sp[k * 3 + 2] = Math.sin(az) * Math.cos(el) * R2; const v = 0.4 + r() * 0.6; sc[k * 3] = v; sc[k * 3 + 1] = v; sc[k * 3 + 2] = v * (0.8 + r() * 0.2); }
       const sg = new THREE.BufferGeometry(); sg.setAttribute("position", new THREE.BufferAttribute(sp, 3)); sg.setAttribute("color", new THREE.BufferAttribute(sc, 3));
       const stars = new THREE.Points(sg, new THREE.PointsMaterial({ size:2, sizeAttenuation:false, vertexColors:true, transparent:true, opacity:0.8, depthWrite:false, fog:false })); stars.position.copy(dome.position); stars.frustumCulled = false; stars.userData.dynamic = true; g.add(stars); }
-    // a storm cloud far off to one side, dark and flat, that flashes now and then
+    // a storm cloud far off to one side, dark and flat, no lightning
     { const cg = new THREE.IcosahedronGeometry(1, 1), cm = new THREE.MeshBasicMaterial({ color:0x1A1630, fog:false, depthWrite:false }), cl = new THREE.InstancedMesh(cg, cm, 24), M4 = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), ps = new THREE.Vector3(); let a = 31; const r = () => { a = (a * 16807) % 2147483647; return a / 2147483647; };
       const ang = 0.9; for(let k = 0; k < 24; k++){ const d = 2600 + r() * 600, lat = (r() - 0.5) * 1700; ps.set(Math.cos(ang) * d - Math.sin(ang) * lat, 520 + r() * 220, Math.sin(ang) * d + Math.cos(ang) * lat); sc.set(300 + r() * 280, 70 + r() * 60, 220 + r() * 160); M4.compose(ps, q, sc); cl.setMatrixAt(k, M4); }
       cl.instanceMatrix.needsUpdate = true; cl.frustumCulled = false; cl.renderOrder = -9; cl.userData.dynamic = true; cl.position.set(dome.position.x, 0, dome.position.z); g.add(cl);
@@ -531,22 +531,13 @@ const SINGAPORE = {
     }
     // the helicopter
     const H = A.heli;
-    if(H){ const a = -t * 0.09 + 0.7, r = 620; H.heli.position.set(A.cx + Math.cos(a) * r, 190 + Math.sin(t * 0.4) * 6, A.cy + Math.sin(a) * r * 0.8); H.heli.rotation.y = -(a - Math.PI / 2); H.rotor.rotation.y = t * 32;
-      H.strobe.visible = (Math.floor(t * 1.6) & 1) === 0; H.strobe2.visible = (Math.floor(t * 1.6 * 3.1) % 4) === 0; }
-    // aviation lights blink in turn
-    if(this.blink){ const ph = (t * 0.9) % 1; this.blink[0].material.opacity = ph < 0.5 ? 1 : 0.08; this.blink[1].material.opacity = ph >= 0.5 ? 1 : 0.08; }
-    // the rare storm: a flash, and a bolt, every half-minute or so
+    if(H){ const a = -t * 0.09 + 0.7, r = 620; H.heli.position.set(A.cx + Math.cos(a) * r, 190 + Math.sin(t * 0.4) * 6, A.cy + Math.sin(a) * r * 0.8); H.heli.rotation.y = -(a - Math.PI / 2); H.rotor.rotation.y = t * 32; }
+    // nothing flashes: the helicopter's lights and the roof beacons burn steady (set once in lights()), and the storm cloud sits dark with no lightning
     const st = this.storm;
     if(st){
-      st.next -= dt;
-      if(st.next < 0){ st.next = 35 + Math.random() * 50; st.flash = 1; const cx = st.dome.position.x, cz = st.dome.position.z, d0 = 2600, a = st.ang + (Math.random() - 0.5) * 0.6;
-        let x = cx + Math.cos(a) * d0, z = cz + Math.sin(a) * d0, y = 600; for(let k = 0; k < 14; k++){ st.bp[k * 3] = x; st.bp[k * 3 + 1] = y; st.bp[k * 3 + 2] = z; x += (Math.random() - 0.5) * 70 - Math.cos(a) * 40; z += (Math.random() - 0.5) * 70 - Math.sin(a) * 40; y -= 46; }
-        st.bolt.geometry.attributes.position.needsUpdate = true; }
-      st.flash = Math.max(0, st.flash - dt * 4);
-      const fl = st.flash * (0.6 + 0.4 * Math.sin(t * 70));
-      st.bolt.material.opacity = fl; st.cm.color.setRGB(0.10 + fl * 0.7, 0.09 + fl * 0.65, 0.19 + fl * 0.9);
-      if(this.domeMat) this.domeMat.color.setScalar(1 + fl * 0.9);
-      G.scene.traverse(o => { if(o.isHemisphereLight && o !== G.envFill) o.intensity = 0.62 + fl * 0.8; });
+      st.bolt.material.opacity = 0; st.cm.color.setRGB(0.10, 0.09, 0.19);
+      if(this.domeMat) this.domeMat.color.setScalar(1);
+      G.scene.traverse(o => { if(o.isHemisphereLight && o !== G.envFill) o.intensity = 0.62; });
     }
   },
 };

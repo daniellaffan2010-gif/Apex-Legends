@@ -846,11 +846,11 @@ function drawProp(ctx, p, T, S){
       boxCol(ctx, p.x, p.y, z, 0.35, 0.35, p.h, p.rot, "#6E757D", sun);
       break; }
     case "garage": {
-      boxCol(ctx, p.x, p.y, z, 22, 9, p.h, p.rot, p.col, sun, 0.22, TEX.garage(p.col));
+      boxCol(ctx, p.x, p.y, z, p.w || 22, 9, p.h, p.rot, p.col, sun, 0.22, TEX.garage(p.col));
       const [gx, gy] = R.P(p.x, p.y, z + p.h);
       ctx.fillStyle = "rgba(255,165,31,.75)";
       ctx.fillRect(gx - R.zoom * 4.5, gy + R.zoom * 1.0, R.zoom * 9, R.zoom * 0.6);
-      boxCol(ctx, p.x, p.y, z + p.h, 24, 10, 0.7, p.rot, shade(p.col, -0.28), sun);
+      boxCol(ctx, p.x, p.y, z + p.h, (p.w || 22) + 2, 10, 0.7, p.rot, shade(p.col, -0.28), sun);
       break; }
     case "banking": {
       boxCol(ctx, p.x, p.y, z, 90, 9, 9, p.rot, p.col, sun, 0.1);

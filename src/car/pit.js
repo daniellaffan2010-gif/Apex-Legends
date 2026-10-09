@@ -1,65 +1,79 @@
 import { $, el } from '../config/util.js';
 import { PARTS, TYRES } from './parts.js';
-import { AUDIO } from '../audio/audio.js';
 import { showMsg } from '../ui/screens.js';
-import { nextServe, served } from '../game/penalties.js';
+import { nextServe, served, issue, serveAtStop } from '../game/penalties.js';
+import { pilotStart, laneS } from './pitpilot.js';
 
-/* ---------- the player's pit stop ---------- */
+/* ---------- the player's pit stop ----------
+   P calls the car in and opens the service menu (the race pauses while you choose).
+   Then you drive it to the pit entry yourself and brake for the speed-limit line; from
+   the line the pit lane drives itself (car/pitpilot.js): your box, the stop, the release,
+   all at the limiter, and hands the car back to you at the second line. */
 function playerPit(c, S, dt){
   const T = S.track;
-  if(c.stopT > 0){
-    c.stopT -= dt; c.thr = 0; c.brk = 1; c.steer = 0;
-    if(c.stopT <= 0) finishStop(c, S);
+  if(c.pitting) return;                                              // the lane has it
+  // back out on the track after a visit: the visit is over
+  if(c.pitVisit && !c.inPit && T.pitRampF(c.node) <= 0.04){
+    c.pitVisit = false; c.pitPlan = null; c.pitReq = false; c.pitWarned = false;
     return;
   }
-  if(c.inPit && !c.pitVisit){
-    c.pitVisit = true;
-    const owe = S.mode === "race" ? nextServe(c) : null;
-    if(owe){
-      // a penalty visit: no tyres, no repairs, no menu — just the lane
-      c.pitPlan = { tyre:"none", repairs:new Set(), done:false, none:owe.kind === "dt", pen:owe.kind };
-      showMsg(owe.kind === "dt" ? "DRIVE-THROUGH" : "STOP-AND-GO",
-              owe.kind === "dt" ? "Hold the limiter all the way through — do not stop" : "Stop in your box for 10 seconds — no work allowed", 3.2);
-    }
-    else if(S.mode === "race" && c.lap <= S.laps) openPitMenu(c, S);
-  }
-  if(!c.inPit && c.pitVisit && T.pitRamp(c.node) <= 0.04){
-    if(c.pitPlan && c.pitPlan.pen === "dt") served(S, c, "dt");
-    c.pitVisit = false; c.pitPlan = null; c.pitReq = false;
-  }
-  // approaching the entry, and missing it
-  if(c.pitReq && !c.inPit && !c.pitting){
-    const u = T.pitU(c.node);
+  if(!c.pitReq || c.pitVisit) return;
+  const s = laneS(c), a = T.pitAlong(s), u = T.pitU(c.node);
+  // approaching the entry
+  if(u < 0){
     const toEntry = (((T.pitIn - c.node) % T.n + T.n) % T.n) * T.ds;
-    if(u < 0 && toEntry < 240 && !c.pitWarned){
+    if(toEntry < 260 && !c.pitWarned){
       c.pitWarned = true;
-      showMsg("PIT ENTRY AHEAD", "Move to the " + (T.pitSide > 0 ? "right" : "left"), 2.0);   // + is the right-hand side
+      showMsg("PIT ENTRY AHEAD", "Move to the " + (T.pitSide > 0 ? "right" : "left") + " · brake for " + Math.round(T.pitLimit * 3.6) + " km/h at the line", 2.4);   // + is the right-hand side
     }
-    if(u > 0.24 && u < 0.7){
-      c.pitReq = false; c.pitWarned = false;
-      showMsg("PIT ENTRY MISSED", "Stay out — call it again next lap", 2.2);
-    }
+    return;
   }
-  const plan = c.pitPlan;
-  if(c.inPit && plan && !plan.none && !plan.done){
-    let bd = ((c.node - T.pitBox) % T.n + T.n) % T.n;
-    if(bd > T.n / 2) bd -= T.n;
-    if(Math.abs(bd) < 6 && c.speed < 2.5) beginStop(c, S);
+  // in the zone: at the speed-limit line, the lane takes the car (or, if it is not in the lane, it missed it)
+  if(a >= T.pitLimA && a < T.pitLimB){
+    if(!c.inPit){
+      c.pitReq = false; c.pitWarned = false; c.pitPlan = null;
+      showMsg("PIT ENTRY MISSED", "Stay out — call it again next lap", 2.2);
+      return;
+    }
+    const kph = c.speed * 3.6, lim = T.pitLimit * 3.6;
+    if(S.mode === "race" && kph > lim + 5) issue(S, c, "t5", "Speeding in the pit lane — " + Math.round(kph) + " km/h at the line");
+    const plan = c.pitPlan || defaultPlan(c, S);
+    if(!plan.pen && !plan.none && S.mode === "race") plan.wait = serveAtStop(S, c);
+    c.pitPlan = plan; c.pitVisit = true;
+    pilotStart(c, S, "player", plan);
   }
 }
+
+function defaultPlan(c, S){
+  return { tyre:(S.wet > 0.45 ? "wet" : c.tyre.key === "soft" ? "hard" : "soft"),
+           repairs:[...c.broken].filter(k => !PARTS[k].tyre), none:false };
+}
 function pitJobTime(c, plan){
-  let t = 2.2;
-  for(const k of plan.repairs) t += PARTS[k].fix;
+  // the tyres take a crew about two and a half seconds; repairs are done alongside, so the longest decides
+  let t = plan.tyre && plan.tyre !== "none" ? 2.4 : 0.6;
+  for(const k of plan.repairs) t = Math.max(t, PARTS[k].fix + 0.6);
   return t;
+}
+/* the call: a penalty to serve takes the visit (no work, no menu); otherwise choose the service */
+function callPit(c, S){
+  const owe = S.mode === "race" ? nextServe(c) : null;
+  if(owe){
+    c.pitPlan = { tyre:"none", repairs:[], none:owe.kind === "dt", pen:owe.kind };
+    c.pitReq = true; c.pitWarned = false;
+    showMsg(owe.kind === "dt" ? "DRIVE-THROUGH" : "STOP-AND-GO",
+            owe.kind === "dt" ? "Through the lane on the limiter — no stop" : "Ten seconds in your box — no work allowed", 3.2);
+    return;
+  }
+  openPitMenu(c, S);
 }
 function openPitMenu(c, S){
   S.menuOpen = true;
-  c.pitPlan = { tyre:(S.wet > 0.45 ? "wet" : c.tyre.key === "soft" ? "hard" : "soft"),
-                repairs:new Set([...c.broken].filter(k => !PARTS[k].tyre)), done:false, none:false };
+  const p = defaultPlan(c, S);
+  c.pitPlan = { tyre:p.tyre, repairs:new Set(p.repairs), none:false, draft:true };
   $("#pitmenu").hidden = false;
-  $("#pit-sub").textContent = S.mode === "race"
-    ? "Lap " + c.lap + " of " + S.laps + " · P" + c.pos + " · the crew are waiting"
-    : "Choose your service";
+  const box = S.track.boxOf(c.team);
+  $("#pit-sub").textContent = (S.mode === "race" ? "Lap " + c.lap + " of " + S.laps + " · P" + c.pos + " · " : "") +
+    c.team.short + " box, " + (box.k + 1) + (box.k === 0 ? "st" : box.k === 1 ? "nd" : box.k === 2 ? "rd" : "th") + " from the pit exit";
   renderPitMenu(c, S);
 }
 function renderPitMenu(c, S){
@@ -79,37 +93,23 @@ function renderPitMenu(c, S){
     const on = plan.repairs.has(k);
     const row = el("button", "fixrow" + (on ? " on" : ""),
       '<span class="tick"></span><span class="nm2">' + PARTS[k].name +
-      '</span><span class="t2">+' + PARTS[k].fix.toFixed(1) + 's</span>');
+      '</span><span class="t2">' + PARTS[k].fix.toFixed(1) + 's</span>');
     row.onclick = () => { plan.repairs.has(k) ? plan.repairs.delete(k) : plan.repairs.add(k); renderPitMenu(c, S); };
     rep2.appendChild(row);
   }
-  $("#pit-time").textContent = pitJobTime(c, plan).toFixed(1) + "s";
+  $("#pit-time").textContent = "about " + pitJobTime(c, { tyre:plan.tyre, repairs:[...plan.repairs] }).toFixed(1) + "s";
 }
-function closePitMenu(S){ S.menuOpen = false; $("#pitmenu").hidden = true; }
-function beginStop(c, S){
+/* the menu's buttons: box (with the service chosen), or a drive-through, or stay out */
+function closePitMenu(S, how){
+  S.menuOpen = false; $("#pitmenu").hidden = true;
+  const c = S.player; if(!c || !c.pitPlan) return;
+  if(how === "out"){ c.pitPlan = null; c.pitReq = false; S.toast && S.toast("Staying out"); return; }
   const plan = c.pitPlan;
-  const t = plan.pen ? 10 : pitJobTime(c, plan) + Math.random() * 0.8;
-  c.stopT = t; c.stopTotal = t; c.vx = c.vy = 0;
-  try{ AUDIO.event("stop", c, S); }catch(e){}
-  S.toast("Stopped — crew working");
-}
-function finishStop(c, S){
-  const plan = c.pitPlan;
-  if(plan.pen){                                  // the stop-and-go is over: the car is released untouched
-    plan.done = true; c.stopT = 0; served(S, c, "sg"); return;
-  }
-  const fitted = TYRES[plan.tyre];
-  if(plan.tyre !== "none" && fitted){
-    c.tyre = fitted; c.used.add(plan.tyre); c.life = 1; c.temp = 0.45;
-    if(c.broken.has("punct")){ c.broken.delete("punct"); c.health.punct = 1; }
-  }
-  for(const k of plan.repairs){ c.broken.delete(k); c.health[k] = 1; }
-  c.recalcPerf();
-  c.damage = Math.max(0, c.damage - 0.5);
-  c.stops++; plan.done = true; c.stopT = 0;
-  try{ AUDIO.event("away", c, S, c.stopTotal.toFixed(1) + " seconds, P" + c.pos + "."); }catch(e){}
-  S.toast("Away · " + c.stopTotal.toFixed(1) + "s");
+  c.pitPlan = { tyre:plan.tyre, repairs:[...plan.repairs], none:how === "through" };
+  c.pitReq = true; c.pitWarned = false;
+  const T = S.track;
+  S.toast && S.toast(how === "through" ? "Drive-through — no stop" : "Box, box — " + (plan.tyre === "none" ? "no tyres" : TYRES[plan.tyre].name.toLowerCase() + "s") +
+    " · " + Math.round(T.pitLimit * 3.6) + " km/h in the lane");
 }
 
-
-export { closePitMenu, playerPit };
+export { callPit, closePitMenu, playerPit, pitJobTime };

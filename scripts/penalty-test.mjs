@@ -63,18 +63,28 @@ console.log('HUD line:', PEN.hudLine(S, p));
 const q = S.cars.find(c => c.ai); PEN.issue(S, q, 'rep', 'a'); PEN.issue(S, q, 'rep', 'b'); PEN.issue(S, q, 'rep', 'c'); ok(q.pen.todo.some(t => t.kind === 'dt'), 'third reprimand is a drive-through');
 // no time to serve → time
 const late = S.cars.filter(c => c.ai)[1]; late.lap = S.laps; PEN.issue(S, late, 'dt', 'x'); ok(late.pen.time === 20 && !late.pen.todo.length, 'drive-through on the last lap becomes +20 s');
-// ---------- 3. serving through the real player pit code ----------
-const { playerPit } = await import('../src/car/pit.js');
-p.inPit = true; p.pitVisit = false; p.pitReq = true; p.stopT = 0; p.lap = 2;
-playerPit(p, S, 0.016); ok(p.pitPlan && p.pitPlan.pen === 'dt' && p.pitPlan.none && !S.menuOpen, 'a penalty visit opens no menu and does not stop (dt)');
-p.inPit = false; p.node = Math.round(S.track.pitOut + 20) % S.track.n; // out the far end
-playerPit(p, S, 0.016); ok(!p.pen.todo.some(t => t.kind === 'dt'), 'drive-through served at pit exit'); console.log('after serving:', say());
-p.inPit = true; p.pitVisit = false; p.pitReq = true; playerPit(p, S, 0.016);
-ok(p.pitPlan && p.pitPlan.pen === 'sg' && !p.pitPlan.none, 'stop-go plan'); 
-p.node = S.track.pitBox; p.vx = p.vy = 0;
-playerPit(p, S, 0.016); ok(p.stopT >= 9.9 && p.stopT <= 10.1, 'stop-go holds the car for 10 s: ' + p.stopT);
-const stops0 = p.stops, tyre0 = p.tyre; p.stopT = 0.001; playerPit(p, S, 0.5);
-ok(!p.pen.todo.length && p.stops === stops0 && p.tyre === tyre0, 'stop-go touches nothing and counts no stop');
+// ---------- 3. serving through the real player pit code: the call, the lane driving itself, the exit ----------
+const PIT = await import('../src/car/pit.js');
+const laneRun = (v0, maxT) => {           // put the player on the entry road 30 m before the speed-limit line, in the lane, and run the lane
+  const T = S.track, aS = Math.max(3, T.pitLimA - 30), f = T.pitFOf(T.pitSOf(T.pitIn) + aS), i = Math.floor(f) % T.n;
+  p.place(i, T.pitFast(f)); p.vx = Math.cos(p.h) * v0; p.vy = Math.sin(p.h) * v0; p.inPit = true; p.pitVisit = false;
+  let held = 0, stopped = false;
+  for (let k = 0; k < 60 * (maxT || 60); k++) {
+    SS.update(1 / 60, 1 / 60);
+    if (p.pp && p.pp.phase === 'stopped') { stopped = true; held = p.pp.st.t; }
+    if (!p.pitVisit && !p.pitting && k > 30 && T.pitU(p.node) < 0) break;
+  }
+  return { held, stopped };
+};
+p.lap = 2; S.state = 'run';
+PIT.callPit(p, S); ok(p.pitPlan && p.pitPlan.pen === 'dt' && p.pitPlan.none && !S.menuOpen && p.pitReq, 'a penalty visit opens no menu and does not stop (dt)');
+const tyreA = p.tyre, stopsA = p.stops;
+let r = laneRun(S.track.pitLimit);
+ok(!r.stopped && !p.pen.todo.some(t => t.kind === 'dt'), 'drive-through served at pit exit, without stopping'); console.log('after serving:', say());
+PIT.callPit(p, S); ok(p.pitPlan && p.pitPlan.pen === 'sg' && !p.pitPlan.none, 'stop-go plan');
+r = laneRun(S.track.pitLimit);
+ok(r.held >= 9.9 && r.held <= 10.6, 'stop-go holds the car for 10 s: ' + r.held.toFixed(2));
+ok(!p.pen.todo.length && p.stops === stopsA && p.tyre === tyreA, 'stop-go touches nothing and counts no stop');
 // ---------- 4. classification ----------
 SS.startSession('race', null); S = SS.S; S.state = 'run'; S.clock = 300;
 S.cars.forEach((c, i) => { c.finished = true; c.finishTime = 280000 + i * 700; c.lap = S.laps + 1; });
@@ -93,22 +103,52 @@ PEN.issue(S, A1, 'dt', 'test dt'); PEN.issue(S, A2, 'sg', 'test sg');
 let t1 = null, t2 = null, hold = 0;
 for (let i = 0; i < 60 * 200 && !S.ended; i++) {
   SS.update(1 / 60, 1 / 60);
-  if (A2.pitting && A2.pitT > 5) hold = Math.max(hold, A2.pitT);
+  if (A2.pp && A2.pp.phase === 'stopped') hold = Math.max(hold, A2.pp.st.t);
   if (!A1.pen.todo.length && t1 == null) t1 = i / 60; if (!A2.pen.todo.length && t2 == null) t2 = i / 60;
   if (t1 != null && t2 != null) break;
 }
+if (t2 == null) console.log('A2 at the end:', A2.drv.abbr, 'lap', A2.lap, 'of', S.laps, 'pitReq', A2.pitReq, 'servePen', A2.servePen, 'pitting', A2.pitting, A2.pp && A2.pp.phase, 'dnf', A2.dnf, 'aiFree', A2.aiFree, 'node', A2.node, 'u', S.track.pitU(A2.node).toFixed(2), 'ended', S.ended, 'todo', JSON.stringify(A2.pen.todo));
 ok(t1 != null, 'AI drive-through served (' + t1 + ' s)'); ok(t2 != null, 'AI stop-go served (' + t2 + ' s)');
 console.log('stops', st1, A1.stops, st2, A2.stops, 'time', A1.pen.time, A2.pen.time, (S.penLog||[]).filter(e => e.abbr === A1.drv.abbr || e.abbr === A2.drv.abbr).map(e => e.text).join(' / '));
 ok(A1.stops - st1 <= 1 && A2.stops - st2 <= 1, 'penalty visits count as no stop'); ok(hold > 9, 'stop-go held ~10 s: ' + hold.toFixed(1));
 ok(!(S.penLog||[]).some(e => /not served/.test(e.text)), 'served penalties are not converted to time');
 console.log('AI served dt after', t1 && t1.toFixed(0), 's, sg after', t2 && t2.toFixed(0), 's');
 // ---------- 6. track limits, collision fault, blue flags, pit speeding on the player ----------
-SS.startSession('race', null); S = SS.S; p = S.player; S.state = 'run'; S.clock = 30; p.lap = 2; p.lapStart = 1000; p.vx = 50; p.vy = 0;
-const excursion = () => { p.off = S.track.half + 3.5; for (let i = 0; i < 8; i++) PEN.tick(S, 0.1); p.off = 0; for (let i = 0; i < 3; i++) PEN.tick(S, 0.1); };
-excursion(); ok(/WARNING/.test(say()) && /1 of 3/.test(say()), 'track limits warning 1: ' + say());
-excursion(); ok(/2 of 3/.test(say()), 'warning 2');
-excursion(); ok(/BLACK & WHITE/.test(say()), 'black and white flag on the third: ' + say());
-const t0p = p.pen.time; excursion(); ok(p.pen.time === t0p + 5 && /5 SECOND/.test(say()), 'fourth strike is 5 s: ' + say());
+// one stop on the same compound is legal now: the rule is only that you pit
+SS.startSession('race', null); S = SS.S; p = S.player; p.finished = true; p.finishTime = 300000; p.lap = S.laps + 1; p.stops = 1; p.used = new Set(['medium']); S.state = 'run'; SS.endSession();
+{ const row = S.results.find(r => r.car === p); ok(row && !row.dq, 'a stop on the same compound is not disqualified: ' + (row && row.dqReason)); }
+SS.startSession('race', null); S = SS.S; p = S.player; PEN.st(p); S.state = 'run'; S.clock = 30; p.lap = 2; p.lapStart = 1000; p.vx = 50; p.vy = 0;
+// leaving the track only costs a penalty when the game measures a gain: time out vs the AI reference over the same distance
+const excursion = (dist, secs, speed) => {
+  S.penQ = []; S.penNext = 1e9; p.vx = speed; p.vy = 0; p.spinT = 0; p.wrecked = false; p.inPit = false; p.pitting = 0; p.s = 500; p.off = S.track.half + 3.5;
+  const n = Math.round(secs * 10);
+  for (let i = 0; i < n; i++) { p.s += dist / n; S.clock += 0.1; PEN.tick(S, 0.1); }
+  p.off = 0; for (let i = 0; i < 3; i++) { S.clock += 0.1; PEN.tick(S, 0.1); }
+};
+const qtxt = () => (S.penQ || []).map(m => m.text).join(' | ');
+let t0p = p.pen ? p.pen.time : 0;
+excursion(160, 0.8, 70); ok(p.pen.time === t0p + 5, 'a shortcut that gains time is a 5 s penalty: ' + qtxt() + ' / time ' + p.pen.time);
+ok(S.penLog.some(e => e.me && /gaining an advantage \(\d+\.\d s\)/.test(e.reason || '')), 'the penalty reason states the time gained: ' + JSON.stringify(S.penLog.slice(-1)));
+t0p = p.pen.time; excursion(25, 1.2, 30); ok(p.pen.time === t0p && /no advantage/.test(qtxt()), 'a slow trip over the gravel gains nothing, no penalty: ' + qtxt());
+t0p = p.pen.time; S.penQ = []; S.penNext = 1e9; p.vx = 60; p.vy = 0; p.s = 500; p.off = S.track.half + 3.5;
+for (let i = 0; i < 6; i++) { p.s += 20; S.clock += 0.1; if (i === 2) p.spinT = 1; PEN.tick(S, 0.1); }
+p.spinT = 0; p.off = 0; for (let i = 0; i < 3; i++) { S.clock += 0.1; PEN.tick(S, 0.1); }
+ok(p.pen.time === t0p, 'spinning off is never an advantage: ' + qtxt());
+t0p = p.pen.time; excursion(160, 0.1, 70); ok(p.pen.time === t0p, 'a brief touch of the white line is ignored');
+ok(!/LIMITS/.test(PEN.hudLine(S, p) || ''), 'no LIMITS n/3 counter any more');
+// qualifying: the lap is deleted only when time was gained
+SS.startSession('qualy', null); S = SS.S; p = S.player; S.state = 'run'; S.clock = 30; p.lap = 0; p.lapStart = 1000; p.lapInvalid = false;
+excursion(25, 1.2, 30); ok(!p.lapInvalid, 'qualy: a slow excursion keeps the lap');
+excursion(160, 0.8, 70); ok(p.lapInvalid && /LAP DELETED/.test(say()), 'qualy: a gaining excursion deletes the lap: ' + say());
+// the black flag carries its reason, in the results row and in the finish message
+SS.startSession('race', null); S = SS.S; p = S.player; PEN.issue(S, p, 'dsq', 'Ignoring the black flag');
+ok(p.pen.dsq && p.pen.dsqReason === 'Ignoring the black flag', 'dsq stores its reason: ' + p.pen.dsqReason);
+p.finished = true; p.finishTime = 300000; p.lap = S.laps + 1; S.state = 'run'; SS.endSession();
+{ const row = S.results.find(r => r.car === p); ok(row && row.dq && row.dqReason === 'Ignoring the black flag', 'results row carries dqReason: ' + (row && row.dqReason)); ok(/Ignoring the black flag/.test(say()), 'finish message gives the reason: ' + say()); }
+// the no-stop DSQ explains itself too
+SS.startSession('race', null); S = SS.S; p = S.player; p.finished = true; p.finishTime = 300000; p.lap = S.laps + 1; p.stops = 0; p.used = new Set(['medium']); S.state = 'run'; SS.endSession();
+{ const row = S.results.find(r => r.car === p); ok(row && row.dq && /pit stop|compound/.test(row.dqReason), 'tyre-rule DSQ has a reason: ' + (row && row.dqReason)); ok(/BLACK FLAG/.test(say()), 'tyre-rule DSQ shows the black flag message: ' + say()); }
+SS.startSession('race', null); S = SS.S; p = S.player; PEN.st(p); S.state = 'run'; S.clock = 30; p.lap = 2; p.lapStart = 1000; p.vx = 50; p.vy = 0;
 // a light tap is "noted", a hard shunt from behind is a penalty on the car behind
 const B1 = S.cars.find(c => c !== p && c.ai), B2 = S.cars.find(c => c !== p && c !== B1 && c.ai);
 for (const c of [B1, B2]) { c.spinT = 0; c.wrecked = false; c.pitting = 0; c.inPit = false; c.vx = c.vy = 0; }
@@ -120,12 +160,16 @@ const keepProg = lead.prog; p.prog = keepProg - S.track.length + 40;
 const tP = p.pen.time; for (let i = 0; i < 40; i++) { lead.prog = keepProg; PEN.tick(S, 0.1); if (i === 12) ok(/BLUE FLAG/.test(say()), 'blue flag shown: ' + say()); }
 for (let i = 0; i < 100; i++) { lead.prog = keepProg; p.prog = keepProg - S.track.length + 40; PEN.tick(S, 0.1); }
 ok(p.pen.time >= tP + 5, 'ignoring the blue flag costs 5 s');
-// pit-lane speeding
-p.inPit = true; p.pitting = 0; p.stopT = 0; p.vx = 60; const tS = p.pen.time; for (let i = 0; i < 40; i++) PEN.tick(S, 0.1);
-ok(p.pen.time === tS + 5, 'pit-lane speeding is 5 s: ' + (p.pen.time - tS)); p.inPit = false;
+// pit-lane speeding: across the speed-limit line 30 km/h too fast
+{ const T = S.track, tS = p.pen.time; p.pitReq = true; p.pitPlan = { tyre:'none', repairs:[], none:true };
+  const aS = Math.max(3, T.pitLimA - 12), f = T.pitFOf(T.pitSOf(T.pitIn) + aS), i = Math.floor(f) % T.n;
+  p.place(i, T.pitFast(f)); const v0 = T.pitLimit + 8.5; p.vx = Math.cos(p.h) * v0; p.vy = Math.sin(p.h) * v0; p.inPit = true; p.pitVisit = false;
+  for (let k = 0; k < 60 && !p.pitting; k++) SS.update(1 / 60, 1 / 60);
+  ok(p.pen.time === tS + 5, 'pit-lane speeding is 5 s: ' + (p.pen.time - tS)); }
 // qualifying: track limits delete the lap
-SS.startSession('qualy', null); S = SS.S; p = S.player; S.state = 'run'; p.lapStart = 1000; p.vx = 60; p.vy = 0;
-p.off = S.track.half + 3.5; for (let i = 0; i < 8; i++) PEN.tick(S, 0.1); ok(p.lapInvalid === true && /LAP DELETED/.test(say()), 'qualifying lap deleted: ' + say());
+SS.startSession('qualy', null); S = SS.S; p = S.player; PEN.st(p); S.state = 'run'; S.clock = 30; p.lap = 2; p.lapStart = 1000; p.vx = 70; p.vy = 0; p.spinT = 0; p.s = 500;
+p.off = S.track.half + 3.5; for (let i = 0; i < 8; i++) { p.s += 20; S.clock += 0.1; PEN.tick(S, 0.1); }
+p.off = 0; for (let i = 0; i < 3; i++) { S.clock += 0.1; PEN.tick(S, 0.1); } ok(p.lapInvalid === true && /LAP DELETED/.test(say()), 'qualifying lap deleted: ' + say());
 console.log('player checks done');
 console.log(fail ? fail + ' FAILED' : 'all checks passed');
 process.exit(fail ? 1 : 0);

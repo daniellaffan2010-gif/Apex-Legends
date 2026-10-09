@@ -267,8 +267,8 @@ G3.prop = function(parent, p, T, S){
       B(p.x, p.y, z, 0.2, 7, p.h, p.rot, p.col);
       break; }
     case "garage": {
-      B(p.x, p.y, z, 22, 9, p.h, p.rot, p.col, TEX.garage(p.col));
-      B(p.x, p.y, z + p.h, 24, 10, 0.7, p.rot, shade(p.col, -0.28));
+      B(p.x, p.y, z, p.w || 22, 9, p.h, p.rot, p.col, TEX.garage(p.col));
+      B(p.x, p.y, z + p.h, (p.w || 22) + 0.4, 10, 0.7, p.rot, shade(p.col, -0.28));
       break; }
     case "banking": {
       B(p.x, p.y, z, 90, 9, 9, p.rot, p.col);

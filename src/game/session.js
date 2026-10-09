@@ -1,4 +1,4 @@
-import { $, TAU, clamp, fmtTime, lerp } from '../config/util.js';
+import { $, TAU, clamp, fmtTime, lerp, store } from '../config/util.js';
 import { TEAMS } from '../config/teams.js';
 import { PARTS, TYRES } from '../car/parts.js';
 import { TRACKS } from '../tracks/index.js';
@@ -14,9 +14,13 @@ import { PART, spawn, stepParts } from '../render2d/particles.js';
 import { drawMini } from '../ui/minimap.js';
 import { KEY, TOUCH, ZOOM_HOLD } from '../input/input.js';
 import { AI_SCALE, CFG, COMBAT } from '../config/settings.js';
-import { playerPit } from '../car/pit.js';
+import { playerPit, callPit } from '../car/pit.js';
+import { pilotStart, aiPlan } from '../car/pitpilot.js';
 import * as PEN from './penalties.js';
 import * as SC from './safetycar.js';
+import * as AERO from '../car/aero.js';
+import * as Garage from './garage.js';
+import * as Tele from './telemetry.js';
 import * as REC from './recovery.js';
 import { AUDIO } from '../audio/audio.js';
 import { show, showMsg, showToast } from '../ui/screens.js';
@@ -29,7 +33,28 @@ import { applyChampionship, saveRecord } from '../ui/championship.js';
 let S = null, paused = false, lastT = 0, hudT = 0;
 
 let SESSION_N = 0;
+/* What the pit lane tells the rest of the game (car/pitpilot.js calls these) */
+const PIT_HOOKS = {
+  stopped(c, S, P){
+    try{ AUDIO.event(c.ai ? "pitstop" : "stop", c, S); }catch(e){}
+    if(!c.ai) showToast(P.pen === "sg" ? "Stop-and-go — ten seconds, hands off" : "Stopped — crew working");
+  },
+  released(c, S, P){
+    const t = P.st ? P.st.t : 0;
+    c.lastStop = t;
+    if(P.pen === "sg"){ PEN.served(S, c, "sg"); c.servePen = null; }
+    if(!c.ai){
+      try{ AUDIO.event("away", c, S, t.toFixed(1) + " seconds, P" + c.pos + "."); }catch(e){}
+      const slow = P.st && P.st.slowBy > 1.5 ? " — a wheel stuck" : P.st && P.st.slowBy > 0 ? " — a slow corner" : "";
+      showToast("Away · " + t.toFixed(1) + "s" + (P.held > 0.3 ? " · held for traffic" : "") + slow);
+    }
+  },
+  unsafe(c, S, o){ if(S.mode === "race") PEN.issue(S, c, "t5", "Unsafe release into the path of " + o.drv.last); },
+  ended(c, S, P){ if(P.pen === "dt"){ PEN.served(S, c, "dt"); c.servePen = null; } },
+};
+
 function startSession(mode, champ){
+  Tele.reset();
   if(S && S.cine) CINE.end(G3, S);
   $("#cine").hidden = true;
   const def = TRACKS.find(t => t.id === CFG.trackId) || TRACKS[0];
@@ -45,7 +70,7 @@ function startSession(mode, champ){
         aiScale:AI_SCALE[CFG.diff], combat:COMBAT[CFG.diff], shake:0, champ:!!champ,
         mustPit:mode === "race", assistLine:!!CFG.line, damage:!!CFG.damage,
         finishOrder:[], ended:false, ghost:null, ghostCar:null, rec:[], bestRec:null,
-        toast:msg => showToast(msg) };
+        toast:msg => showToast(msg), pitHooks:PIT_HOOKS };
 
   // field
   const entries = [];
@@ -84,7 +109,7 @@ function startSession(mode, champ){
     if(mode !== "race"){ const vv = T.vprof[node] * 0.8; c.railV = vv;
       c.vx = Math.cos(c.h) * vv; c.vy = Math.sin(c.h) * vv; }
     c.pos = slot + 1;
-    if(!c.ai) S.player = c;
+    if(!c.ai){ c.su = Garage.fitted(); c.setup = Garage.selected(); S.player = c; }
     S.cars.push(c);
   });
   if(mode !== "race"){ S.state = "run"; S.lights = 5; }
@@ -136,15 +161,11 @@ function updateStatus(c){
   if(pod) pod.setAttribute("fill", "#0E1217");
 }
 function requestPit(){
-  const c = S.player; if(!c || c.pitting || c.stopT > 0 || c.inPit) return;
+  const c = S.player; if(!c || c.pitting || c.pitVisit || c.inPit || S.mode === "tt") return;
+  if(c.pitReq){ c.pitReq = false; c.pitWarned = false; c.pitPlan = null; showToast("Pit call cancelled — stay out"); return; }
   const u = S.track.pitU(c.node);
-  if(!c.pitReq && u > 0.05 && u < 0.88){ showToast("Too late — the pit entry is behind you"); return; }
-  c.pitReq = !c.pitReq;
-  c.pitWarned = false;
-  const jobs = [...c.broken].map(k => PARTS[k].name.toLowerCase());
-  showToast(c.pitReq
-    ? "Box, box — pit entry open" + (jobs.length ? " · " + jobs.join(", ") + " to fix" : "")
-    : "Pit call cancelled — stay out");
+  if(u > 0.05 && u < 0.88){ showToast("Too late — the pit entry is behind you"); return; }
+  callPit(c, S);
 }
 
 function recover(){
@@ -153,6 +174,17 @@ function recover(){
   // back on the road, but the car is as broken as it was: only the pit crew fix damage
   c.place(i, T.line[i]); c.vx = Math.cos(c.h) * 12; c.vy = Math.sin(c.h) * 12;
   showToast("Recovered to the track");
+}
+
+/* C (or the CAM pad): the overhead view or the driver's eye. The cockpit needs
+   the 3D renderer; the choice is remembered between sessions. */
+G3.view = store("view") === "cockpit" ? "cockpit" : "iso";
+function cycleView(){
+  if(!S) return;
+  if(!G3.ok || G3.lost){ showToast("The cockpit view needs the 3D renderer"); return; }
+  G3.view = G3.view === "cockpit" ? "iso" : "cockpit";
+  store("view", G3.view);
+  showToast(G3.view === "cockpit" ? "Cockpit view" : "Overhead view", 1.4);
 }
 
 function playerInput(c, dt){
@@ -200,12 +232,13 @@ function updateTiming(c){
         if(!c.ai){
           if(S.mode === "tt" && (S.bestRec == null || t < (S.bestTT ?? 1e9))){ S.bestTT = t; S.bestRec = c.recBuf.slice(); }
           saveRecord(S.track.id, t, c);
+          c.teleLap = Tele.finish(S, c, t, c.setup);
         }
       }
       c.lap++;
     } else { c.lap = 1; }
     c.lapStart = ms; c.secStart = ms; c.curSec = 0; c.lapInvalid = false;
-    if(!c.ai){ c.recBuf = []; }
+    if(!c.ai){ c.recBuf = []; if(c.lapStart != null) Tele.startLap(c); }
     if(S.mode === "race" && c.lap > S.laps && !c.finished){
       c.finished = true; c.finishTime = ms; S.finishOrder.push(c);
       if(!c.ai) endSession();
@@ -215,10 +248,12 @@ function updateTiming(c){
     // pit release
     if(c.pitReq && !c.pitting && S.mode === "race" && c.lap <= S.laps) { /* entry handled below */ }
   }
-  // pit entry
-  if(c.ai && !c.dnf && !c.aiFree && c.pitReq && !c.pitting && S.mode === "race" && c.node >= T.pitIn && c.node < T.pitIn + 6 && c.lap <= S.laps){
-    c.pitting = 1; c.pitS = c.node; c.pitDone = false; c.pitT = 0;
-    if(!c.ai) showToast("Pit entry — limiter on");
+  // pit entry: a rival is taken down the lane by the pit pilot (car/pitpilot.js) from the entry
+  const pu = T.pitU(c.node);
+  if(c.ai && !c.dnf && !c.aiFree && c.spinT <= 0 && c.pitReq && !c.pitting && S.mode === "race" && pu >= 0 && pu < 0.10 && c.lap <= S.laps){
+    const plan = c.servePen ? { tyre:"none", repairs:[], none:c.servePen === "dt", pen:c.servePen } : aiPlan(c);
+    if(!plan.pen) plan.wait = PEN.serveAtStop(S, c);
+    pilotStart(c, S, "ai", plan);
     // the race leader diving in is news; so is anyone just ahead or behind you
     c.pitNews = c.pos === 1 ? "lead" : (S.player && !S.player.dnf && Math.abs(c.pos - S.player.pos) === 1) ? "near" : null;
     if(c.pitNews === "lead") showMsg("LEADER PITS", `${c.drv.last} is in — ${c.tyre.name.toLowerCase()}s off, ${(c.nextTyre || TYRES.medium).name.toLowerCase()}s on`, 2.4);
@@ -283,6 +318,8 @@ function update(dt, rdt){
   S.wet = lerp(S.wet, S.wetTarget, dt * 0.15);
   if(S.wetTarget > 0 && S.wet > 0.25 && !S.wetToast){ S.wetToast = true; showToast("Rain — the track is going wet"); }
 
+  AERO.update(S, dt);                                   // slipstream and dirty air, once a frame, before anyone moves
+
   for(const c of S.cars){
     if(S.state === "lights"){
       // engines running, brakes on, nobody moves — and no creeping backwards
@@ -297,8 +334,9 @@ function update(dt, rdt){
       continue;
     }
     if(c.ai){ if(!c.dnf) driveAI(c, S, dt); }          // a retired car has nobody driving it: it stays where it stopped
-    else { playerPit(c, S, dt); if(c.stopT > 0){ c.vx = 0; c.vy = 0; continue; } playerInput(c, dt); SC.limitPlayer(S, c); }
+    else { playerPit(c, S, dt); if(!c.pitting){ playerInput(c, dt); SC.limitPlayer(S, c); } }
     c.step(dt, S);
+    if(c === S.player) Tele.sample(S, c);
     if(S.state === "run") updateTiming(c);
     // particles
     const spd = c.speed;
@@ -435,7 +473,17 @@ function update(dt, rdt){
     const want = S.crashKind === "wreck" ? (S.crashT < 4.6 ? 0.2 : 0.55) : 1;
     S.slow = lerp(S.slow == null ? 1 : S.slow, want, 1 - Math.exp(-rdt * 7));
     const settled = !S.player.wrecked && S.player.speed < 1.2;
-    if(S.crashCam <= 0 || (settled && S.crashT > 3.0)){ S.crashCam = 0; S.slow = 1; endSession(); }
+    if(S.crashCam <= 0 || (settled && S.crashT > 3.0)){
+      S.crashCam = 0; S.slow = 1;
+      if(S.mode === "race" && S.player.dnf && !S.ended){
+        // the truck and crane lift the wreck away (world frozen), then the rest of the race is simulated behind a plain screen
+        const sess = S;
+        const startSim = () => { if(S !== sess || S.ended) return; S.dnfScene = false; S.simRest = 0; $("#hud").hidden = false; $("#simrest").hidden = false; };
+        if(G3.ok && !G3.lost){ S.dnfScene = true; CINE.begin(G3, S, "dnf", startSim); }
+        else { S.cine = null; startSim(); }
+      }
+      else endSession();
+    }
   }
 
   // camera
@@ -477,7 +525,7 @@ function update(dt, rdt){
   const ty = ty0 - lc * 0.17 * R.H / Math.max(R.zoom, 1);            // sit the car low in frame
   R.camX = lerp(R.camX, tx, 1 - Math.pow(0.0008, dt));
   R.camY = lerp(R.camY, ty, 1 - Math.pow(0.0008, dt));
-  const inLane = p.inPit || p.stopT > 0 || p.pitting;
+  const inLane = p.inPit || p.pitting;
   S.pitFocus = lerp(S.pitFocus || 0, inLane ? 1 : 0, 1 - Math.pow(0.05, dt));
   // the zoom is sized to the view: never work it out from a view that measured nothing
   if(!(R.W > 0) || !(R.H > 0)) R.resize();
@@ -498,6 +546,7 @@ function update(dt, rdt){
 /* ---------- end of session ---------- */
 function endSession(){
   if(S.ended) return; S.ended = true; S.state = "done";
+  $("#simrest").hidden = true;
   try{ AUDIO.silence(); }catch(e){}
   const arr = positions();
   const T = S.track;
@@ -508,37 +557,72 @@ function endSession(){
       : cl.any ? cl.key.get(c) - key0
       : (c.finished && first.finished ? c.finishTime - first.finishTime : c.gap);
     return { car:c, pos:c.pos, gap, best:c.best, stops:c.stops, tyre:c.tyre,
-             pen:cl.any ? cl.pen.get(c) : 0, dq:!!(c.pen && c.pen.dsq),
+             pen:cl.any ? cl.pen.get(c) : 0, dq:!!(c.pen && c.pen.dsq), dqReason:(c.pen && c.pen.dsq && c.pen.dsqReason) || "",
              total:cl.any && c === first && c.finished ? key0 : null };
   });
   cl.order.forEach((c, i) => { c.pos = i + 1; });
   const out = S.cars.filter(c => c.dnf).sort((a, b) => (b.prog || 0) - (a.prog || 0));
   for(const c of out) res.push({ car:c, pos:res.length + 1, gap:null, best:c.best, stops:c.stops, tyre:c.tyre, dnf:true });
   res.forEach((r, i) => r.pos = i + 1);
-  // two-compound rule
+  // mandatory stop: every finisher must have pitted at least once (any tyre will do); anyone who ran wets is exempt
   if(S.mode === "race" && S.mustPit){
-    // two dry compounds, or no stop at all; anyone who ran wets is exempt
-    for(const r of res) if(!r.dnf && !r.dq && (r.car.used.size < 2 || r.car.stops === 0) && !r.car.used.has("wet")){ r.dq = true; }
+    for(const r of res) if(!r.dnf && !r.dq && r.car.stops === 0 && !r.car.used.has("wet")){
+      r.dq = true;
+      r.dqReason = "Made no pit stop — mandatory pit stop rule";
+    }
     res.sort((a, b) => (a.dnf - b.dnf) || (a.dq - b.dq) || (a.pos - b.pos));
     res.forEach((r, i) => r.pos = i + 1);
   }
+  // gaps and the winner's total are measured from the car that actually won: if the car that crossed the line first was
+  // disqualified, the new P1 inherits the total and everyone's gap is re-based on them
+  const win = res.find(r => !r.dq && !r.dnf);
+  if(win && win.car !== first){
+    const wc = win.car, wk = cl.any ? cl.key.get(wc) : wc.finishTime;
+    for(const r of res){
+      if(r.dnf || r.dq) continue;
+      const c = r.car;
+      r.gap = c === wc ? null
+        : cl.any ? cl.key.get(c) - wk
+        : (c.finished && wc.finished ? c.finishTime - wc.finishTime : (c.gap != null && wc.gap != null ? c.gap - wc.gap : c.gap));
+      r.total = c === wc && c.finished && cl.any ? wk : null;
+    }
+  }
   for(const r of res) r.car.pos = r.pos;
   S.results = res;
+  // places lost to the player's own penalties: cars that were behind on the road and are classified ahead (retirements and disqualified cars don't count)
+  if(S.mode === "race"){
+    const mine = res.find(r => r.car === S.player), a = arr.indexOf(S.player);
+    S.penPlaces = (!mine || mine.dq || mine.dnf || a < 0) ? 0
+      : res.filter(r => r.pos < mine.pos && !r.dq && !r.dnf && arr.indexOf(r.car) > a).length;
+  }
   if(S.champ && S.mode === "race") applyChampionship(res);
   const sess = S;
   // a retirement and a win each get a cutscene; everything else goes straight to the results
   const kind = (G3.ok && !G3.lost && S.mode === "race")
-    ? (S.player.dnf ? "dnf" : (res[0] && res[0].car === S.player && !res[0].dq && !res[0].dnf) ? "win" : null) : null;
+    ? (S.player.dnf ? null : (res[0] && res[0].car === S.player && !res[0].dq && !res[0].dnf) ? "win" : null) : null;
   if(kind){
     setTimeout(() => { if(S === sess) CINE.begin(G3, S, kind, () => { if(S === sess) showResults(res); }); }, kind === "win" ? 1800 : 200);
   } else setTimeout(() => { if(S === sess) showResults(res); }, 900);
   if(kind !== "dnf"){
-    const black = !!(S.player.pen && S.player.pen.dsq);
+    const mineRow = res.find(r => r.car === S.player), black = !!(mineRow && mineRow.dq);
     showMsg(S.player.dnf ? "DNF" : black ? "BLACK FLAG" : S.mode === "qualy" ? "CHEQUERED FLAG" : "FINISH",
-      S.player.dnf ? (S.player.retiredBy || "Retired") : black ? "Disqualified" : S.mode !== "race" ? "Session over"
+      S.player.dnf ? (S.player.retiredBy || "Retired") : black ? "Disqualified" + (mineRow.dqReason ? " — " + mineRow.dqReason : "") : S.mode !== "race" ? "Session over"
         : PEN.owed(S.player) > 0 ? `P${S.player.pos} · +${PEN.owed(S.player)} s in penalties`
         : S.player.pos === 1 ? "Race win" : `P${S.player.pos}`, 2.4);
     $("#flag").classList.add("on"); setTimeout(() => $("#flag").classList.remove("on"), 1400);
+  }
+}
+
+/* the player is out: run the rest of the race without drawing it, then classify with the simulated times */
+function restDone(){ return S.cars.every(c => c.dnf || c.finished); }
+function simulateRest(budgetMs){
+  const t0 = Date.now(), CAP = 60 * 60 * 40;
+  while(!S.ended && S.simRest != null){
+    for(let i = 0; i < 120; i++){
+      update(1 / 60, 1 / 60); S.simRest++;
+      if(S.ended || restDone() || S.simRest > CAP){ S.simRest = null; endSession(); return; }
+    }
+    if(Date.now() - t0 > budgetMs) return;
   }
 }
 
@@ -546,10 +630,12 @@ function loop(t){
   requestAnimationFrame(loop);
   const dt = Math.min(0.033, (t - lastT) / 1000 || 0.016); lastT = t;
   if(!S){ return; }
-  if(!paused && !S.menuOpen && S.state !== "done") update(dt * (S.slow == null ? 1 : S.slow), dt);
+  if(S.simRest != null && !S.ended && !paused){ simulateRest(24); }
+  else if(S.dnfScene){ if(!paused){ S.clock += dt; stepParts(dt); } }      // the retirement cutscene: the race stands still
+  else if(!paused && !S.menuOpen && S.state !== "done") update(dt * (S.slow == null ? 1 : S.slow), dt);
   else if(!paused && S.state === "done") { S.clock += dt; stepParts(dt); }
   if(S.cine && !paused) CINE.update(G3, S, dt);
-  renderWorld(S);
+  if(S.simRest == null || S.ended) renderWorld(S);                        // the simulated rest of the race is never drawn
   if(R.tv && S.tv){
     const ctx = R.ctx; ctx.save(); ctx.setTransform(R.dpr, 0, 0, R.dpr, 0, 0);
     ctx.fillStyle = "rgba(10,12,16,.72)"; ctx.fillRect(18, R.H - 54, 190, 34);
@@ -564,4 +650,4 @@ function loop(t){
 
 function setPaused(v){ paused = v; }
 function setS(v){ S = v; }
-export { S, endSession, loop, paused, recover, requestPit, setPaused, setS, startSession, update, updateStatus };
+export { S, cycleView, endSession, loop, simulateRest, paused, recover, requestPit, setPaused, setS, startSession, update, updateStatus };

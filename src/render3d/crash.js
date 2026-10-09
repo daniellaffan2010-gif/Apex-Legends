@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { TAU, clamp, lerp } from '../config/util.js';
 import { CAR_SPEC } from '../car/spec.js';
+import { wearLook } from '../car/tyrewear.js';
 import { spawn } from '../render2d/particles.js';
 import { CARGEO } from './car.js';
 import { G3 } from './g3.js';
@@ -149,7 +150,8 @@ const CRASH = {
         const P = g.userData.parts, pv = P.pivots[ev.idx]; if(!pv) continue;
         const wp = new THREE.Vector3(); pv.getWorldPosition(wp);
         const ax = CAR_SPEC[ev.idx >= 2 ? "front" : "rear"];
-        const m = new THREE.Mesh(CARGEO.wheel(G, ax.r, ax.w, P.compound, c.team.wheel || "#2A2D31"), G.carMats(c.team).tyre);
+        const m = new THREE.Mesh(CARGEO.wheel(G, ax.r, ax.w, P.compound, c.team.wheel || "#2A2D31"), G.tyreWearMat(G.carMats(c.team).tyre));
+        G.setTyreWear(m.material, wearLook(c.life != null ? c.life : 1));
         m.castShadow = true; m.position.copy(wp); m.quaternion.copy(quat);
         // the axle runs along the car's z; it leaves outward, hopping
         const out = new THREE.Vector3(0, 0, ev.idx % 2 ? -1 : 1).applyQuaternion(quat);

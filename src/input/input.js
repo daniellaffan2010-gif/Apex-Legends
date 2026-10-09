@@ -1,6 +1,6 @@
 import { clamp } from '../config/util.js';
 import { R } from '../render2d/view.js';
-import { S, paused, recover, requestPit } from '../game/session.js';
+import { S, cycleView, paused, recover, requestPit } from '../game/session.js';
 import { AUDIO } from '../audio/audio.js';
 import { togglePause } from '../ui/screens.js';
 
@@ -11,6 +11,7 @@ addEventListener("keydown", e => {
   if(e.key === "Escape") togglePause();
   if(e.key.toLowerCase() === "p" && S && S.state === "run") requestPit();
   if(e.key.toLowerCase() === "r" && S && S.state === "run") recover();
+  if(e.key.toLowerCase() === "c" && !e.repeat && S && !paused) cycleView();
   if(e.key.toLowerCase() === "m"){ try{ AUDIO.init(); AUDIO.toggle(); }catch(err){} }
 });
 addEventListener("keyup", e => { KEY[e.key.toLowerCase()] = false; });
@@ -41,6 +42,8 @@ function bindTouch(){
     n.addEventListener("pointerdown", on); n.addEventListener("pointerup", off);
     n.addEventListener("pointercancel", off); n.addEventListener("pointerleave", off);
   }
+  const cam = document.getElementById("t-cam");
+  if(cam) cam.addEventListener("pointerdown", e => { e.preventDefault(); if(!paused) cycleView(); });
 }
 
 

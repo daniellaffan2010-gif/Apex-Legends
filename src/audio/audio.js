@@ -389,11 +389,20 @@ const AUDIO = {
     const p = S.player;
     if(p.dnf || S.state === "done"){ this.silence(); return; }
     // ---- pit crew ----
-    if(p.stopT > 0){
-      this.gunT -= dt; this.yellT -= dt;
-      if(this.gunT <= 0){ this.gunT = 0.20 + Math.random() * 0.22; this.gun((Math.random() - 0.5) * 1.5); }
-      if(this.yellT <= 0){ this.yellT = 0.5 + Math.random() * 1.1; this.yell(); }
-    }
+    /* The guns go when the stop says they do (car/pitstop.js): each corner's nut off, then on again,
+       panned to its side of the car (corners 0 and 2 are the right-hand wheels). */
+    const st = p.pp && p.pp.phase === "stopped" ? p.pp.st : null;
+    if(st && !st.noWork){
+      const t0 = this.stopT0 == null || this.stopRef !== st ? st.t : this.stopT0;
+      for(let q = 0; q < 4; q++){
+        const k = st.corners[q], pan = (q % 2 === 0 ? 0.7 : -0.7);
+        if(t0 < k.off && st.t >= k.off) this.gun(pan);
+        if(t0 < k.on && st.t >= k.on) this.gun(pan);
+      }
+      this.stopT0 = st.t; this.stopRef = st;
+      this.yellT -= dt;
+      if(this.yellT <= 0 && st.t > 0.5){ this.yellT = 0.6 + Math.random() * 1.2; this.yell(); }
+    } else { this.stopT0 = null; this.stopRef = null; }
 
     this.engineer(S, dt);
   },

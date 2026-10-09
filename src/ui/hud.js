@@ -1,8 +1,10 @@
 import { $, clamp, el, fmtGap, fmtTime } from '../config/util.js';
 import { PARTS } from '../car/parts.js';
-import { LAUNCH_HI, LAUNCH_LO } from '../car/physics.js';
+import { LAUNCH_HI, LAUNCH_LO, gearOf, rpmOfCar } from '../car/physics.js';
 import { S, updateStatus } from '../game/session.js';
 import { hudLine } from '../game/penalties.js';
+import { stopPose } from '../car/pitstop.js';
+import { STAGES, wearLook, stageOf, barColour } from '../car/tyrewear.js';
 
 function buildBoard(){
   const b = $("#h-board"); b.innerHTML = "";
@@ -11,10 +13,57 @@ function buildBoard(){
     b.appendChild(r);
   }
 }
-function rpmOfCar(c){
-  const kph = c.speed * 3.6, gear = clamp(Math.ceil(kph / 42), 1, 8);
-  return 4200 + clamp((kph - (gear - 1) * 42) / 42, 0, 1) * 9200;
+/* The pit panel under the clock: what the lane wants from you right now. Called in: your box and the limit;
+   on the entry road: the line and your speed against the limit; on the limiter: metres to your box; stopped:
+   the stop's own clock, a light per wheel (amber off, green done), the jacks and the release light. */
+let pitHTML = "";
+function pitPanel(c, S){
+  const host = $("#h-lim"), T = S.track;
+  let h = "";
+  const lim = Math.round((T.pitLimit || 22.2) * 3.6);
+  const box = T.boxOf ? T.boxOf(c.team) : null, nth = box ? box.k + 1 : 0;
+  const P = c.pp;
+  if(P && P.phase === "stopped" && P.st){
+    const st = P.st, po = stopPose(st, pitPanel.po || (pitPanel.po = {}));
+    const pip = q => { const k = po["c" + q]; return '<i class="pip ' + (st.corners[q].none ? "" : k >= 3 ? "ok" : k >= 1 ? "on" : "") + '"></i>'; };
+    h = '<b>' + (st.noWork ? "STOP-GO" : po.work ? "IN THE BOX" : "SERVING") + '</b> ' + st.t.toFixed(1) + 's' +
+        (st.noWork ? "" : ' <span class="pips">' + pip(3) + pip(2) + '<br>' + pip(1) + pip(0) + '</span>') +
+        ' <i class="lamp ' + (po.light ? "go" : "") + '"></i>';
+  } else if(P && c.pitting){
+    const d = Math.max(0, (P.stopA != null && P.relA == null ? P.stopA : P.box.a) - P.a);
+    h = P.relA == null && P.stop ? '<b>PIT LIMITER · ' + lim + '</b> your box ' + Math.round(d) + ' m' : '<b>PIT LIMITER · ' + lim + '</b>';
+  } else if(c.pitReq && c.inPit && !c.pitVisit){
+    const s = c.s, a = T.pitAlong(s), toLine = Math.max(0, T.pitLimA - a), kph = Math.round(c.speed * 3.6);
+    h = '<b>LIMIT ' + lim + ' IN ' + Math.round(toLine) + ' m</b> <span class="' + (kph > lim + 4 ? "hot" : "") + '">' + kph + ' km/h</span>';
+  } else if(c.pitReq && !c.pitVisit){
+    h = '<b>BOX THIS LAP</b> ' + (box ? c.team.short + ' · box ' + nth + ' from the exit · ' : '') + lim + ' km/h';
+  } else if(c.pitVisit && c.inPit){
+    h = '<b>LIMITER OFF</b> rejoin with care';
+  }
+  host.hidden = !h;
+  if(h !== pitHTML){ pitHTML = h; host.innerHTML = h; }
 }
+
+/* The tyre icon: wear eases down, snaps back up on a fresh set; every layer's opacity is a CSS variable fed by
+   wearLook() (car/tyrewear.js), written only when it has moved, so the icon morphs with no steps. */
+const TW = { life:1, t:0, set:null, stage:-1, swap:0 };
+function tyreWearHud(c, tyEl){
+  const now = performance.now(), dt = TW.t ? Math.min((now - TW.t) / 1000, 0.25) : 0; TW.t = now;
+  const L = c.life != null ? c.life : 1;
+  TW.life = L > TW.life ? L : TW.life + (L - TW.life) * (1 - Math.exp(-dt * 6));
+  const look = wearLook(TW.life), keys = ["scuff", "grain", "marb", "cords", "fade", "heat"], src = [look.scuff, look.grain, look.marbles, look.cords, look.fade, look.heat];
+  const last = TW.set || (TW.set = [-1, -1, -1, -1, -1, -1]);
+  for(let i = 0; i < 6; i++) if(Math.abs(src[i] - last[i]) > 0.005){ last[i] = src[i]; tyEl.style.setProperty("--" + keys[i], src[i].toFixed(3)); }
+  const wear = $("#h-wear"); wear.style.width = (TW.life * 100).toFixed(0) + "%"; wear.style.background = barColour(TW.life);
+  const sg = stageOf(TW.life);
+  if(sg !== TW.stage){
+    const lab = $("#h-wstage");
+    if(TW.stage < 0) lab.textContent = STAGES[sg].name;
+    else { lab.classList.add("swap"); clearTimeout(TW.swap); TW.swap = setTimeout(() => { lab.textContent = STAGES[sg].name; lab.classList.remove("swap"); }, 150); }
+    TW.stage = sg;
+  }
+}
+
 function updateHUD(){
   if(!S || !S.player) return;
   const c = S.player, T = S.track, ms = S.clock * 1000;
@@ -46,10 +95,19 @@ function updateHUD(){
     const t = scs === "out" ? "SAFETY CAR · NO OVERTAKING" : "SAFETY CAR IN THIS LAP";
     if(scEl.textContent !== t) scEl.textContent = t;
   }
+  // slipstream / dirty air (aero.js): dirty air wins when both are present
+  const aeEl = $("#h-aero"), live = S.state !== "lights" && !c.dnf && !c.wrecked;
+  const aeK = !live ? "" : c.dirty > 0.2 ? "dirty" : c.tow > 0.15 ? "tow" : "";
+  aeEl.hidden = !aeK;
+  if(aeK){
+    const t = aeK === "tow" ? "SLIPSTREAM" : "DIRTY AIR";
+    if(aeEl.textContent !== t) aeEl.textContent = t;
+    aeEl.classList.toggle("dirty", aeK === "dirty");
+  }
   const ty = c.tyre;
-  const cmp = $("#h-cmp"); cmp.textContent = ty.label; cmp.style.setProperty("--tyc", ty.col);
-  const wear = $("#h-wear"); wear.style.width = (c.life * 100).toFixed(0) + "%";
-  wear.style.background = c.life > 0.55 ? "var(--green)" : c.life > 0.25 ? "var(--yellow)" : "var(--red)";
+  const cmp = $("#h-cmp"); if(cmp.textContent !== ty.label) cmp.textContent = ty.label;
+  const tyEl = $("#h-tyre"); if(tyEl._col !== ty.col){ tyEl._col = ty.col; tyEl.style.setProperty("--tyc", ty.col); }
+  tyreWearHud(c, tyEl);
   const dbox = $("#h-dmg"), anyD = c.damage > 0.02 || c.broken.size > 0;
   dbox.hidden = !anyD;
   if(anyD){
@@ -61,7 +119,7 @@ function updateHUD(){
     const host = $("#h-chips");
     if(host.dataset.k !== chips){ host.dataset.k = chips; host.innerHTML = chips; }
   }
-  $("#h-lim").hidden = !c.inPit;
+  pitPanel(c, S);
   $("#h-status").hidden = false;
   updateStatus(c);
   $("#h-ebat").textContent = Math.round(c.batt * 100) + "%";
@@ -75,7 +133,7 @@ function updateHUD(){
   bar.classList.toggle("good", launching && c.revs >= LAUNCH_LO && c.revs <= LAUNCH_HI);
   bar.classList.toggle("hot", launching ? c.revs > LAUNCH_HI : revN > 0.9);
   $("#h-spd").textContent = Math.round(kph);
-  $("#h-gear").textContent = c.speed < 0.5 ? "N" : clamp(Math.ceil(kph / 42), 1, 8);
+  $("#h-gear").textContent = c.speed < 0.5 ? "N" : gearOf(c);
 
   const arr = S.cars.filter(x => !x.dnf).sort((a, b) => a.pos - b.pos);
   let start = clamp(c.pos - 3, 0, Math.max(0, arr.length - 6));

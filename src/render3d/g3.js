@@ -19,7 +19,8 @@ const V3 = (x, y, z) => new THREE.Vector3(x, z || 0, y);
 function cssOf(c){ return (typeof c === "string") ? c : "#888888"; }
 
 const G3 = {
-  ok:false, scene:null, rend:null, cv:null, camIso:null, camTV:null,
+  ok:false, scene:null, rend:null, cv:null, camIso:null, camTV:null, camFP:null,
+  view:"iso",              // the player's chosen view: "iso" overhead or "cockpit"
   world:null, cars:[], sun:null, built:null, wet:0, sparks:null, sparkN:0,
   mats:new Map(), texes:new Map(), dyn:[],
 
@@ -162,6 +163,8 @@ const G3 = {
     // the true isometric angle: 45 degrees round, 35.26 up
     this.camIso = new THREE.OrthographicCamera(-50, 50, 50, -50, 0.5, 6000);
     this.camTV = new THREE.PerspectiveCamera(38, 1, 0.5, 6000);
+    // the driver's eye: the halo is a quarter of a metre away, the sky domes up to seven kilometres
+    this.camFP = new THREE.PerspectiveCamera(52, 1, 0.15, 8000);
     this.resize();
     addEventListener("resize", () => this.resize());
     this.ok = true;
@@ -172,6 +175,7 @@ const G3 = {
     const w = this.cv.clientWidth || 1, h = this.cv.clientHeight || 1;
     this.rend.setSize(w, h, false);
     this.camTV.aspect = w / h; this.camTV.updateProjectionMatrix();
+    this.camFP.aspect = w / h; this.camFP.updateProjectionMatrix();
   },
 
   /* ---- geometry helpers ---- */
@@ -270,6 +274,59 @@ const G3 = {
     m.customProgramCacheKey = () => "dither|" + (edge ? 1 : 0) + "|" + (base.customProgramCacheKey ? base.customProgramCacheKey() : "");
     m.userData.dither = true;
     return m;
+  },
+  /* A tyre that shows its wear. `base` is the shared tyre material; each wheel gets its own clone with its own
+     uniforms, but they all compile to one program (fixed cache key). The wheel geometry carries a `zone` per vertex
+     (0 rim, 1 sidewall, 2 compound band, 3 tread). The marks are worked out in the wheel's own space, so they turn
+     with it. Weights come from wearLook() in car/tyrewear.js; setTyreWear() pushes them in when they have moved. */
+  tyreWearMat(base){
+    const m = base.clone();
+    const U = { uGloss:{ value:1 }, uScuff:{ value:0 }, uFade:{ value:0 }, uGrain:{ value:0 }, uMarb:{ value:0 }, uCords:{ value:0 }, uHeat:{ value:0 } };
+    const prev = base.onBeforeCompile;
+    m.onBeforeCompile = (sh, r) => {
+      if(prev && prev !== THREE.Material.prototype.onBeforeCompile) prev(sh, r);
+      for(const k in U) sh.uniforms[k] = U[k];
+      sh.vertexShader = "attribute float zone;\nvarying float vTwZone;\nvarying vec3 vTwP;\n" +
+        sh.vertexShader.replace("#include <begin_vertex>", "#include <begin_vertex>\n  vTwZone = zone; vTwP = position;");
+      sh.fragmentShader = "uniform float uGloss; uniform float uScuff; uniform float uFade; uniform float uGrain; uniform float uMarb; uniform float uCords; uniform float uHeat;\n" +
+        "varying float vTwZone; varying vec3 vTwP;\n" +
+        "float twH(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }\n" +
+        sh.fragmentShader
+          .replace("#include <color_fragment>", "#include <color_fragment>\n" +
+            "  float twRub = step(0.5, vTwZone), twTrd = step(2.5, vTwZone), twBnd = step(1.5, vTwZone) * (1.0 - twTrd);\n" +
+            "  float twU = (abs(vTwP.x) + abs(vTwP.y) > 1e-4 ? atan(vTwP.y, vTwP.x) : 0.0) * 0.15915 + 0.5;\n" +
+            "  float twZ = clamp(vTwP.z, -2.0, 2.0);\n" +
+            "  vec3 twC = diffuseColor.rgb;\n" +
+            "  twC = mix(twC, vec3(0.30, 0.31, 0.32), uScuff * 0.5 * twTrd);\n" +
+            "  float twS = twH(vec2(floor(twU * 90.0), 3.0));\n" +
+            "  twC += uGrain * 0.12 * twTrd * step(0.55, twS) * (0.5 + 0.5 * sin(twZ * 40.0 + twS * 6.0));\n" +
+            "  vec2 twQ = vec2(twU * 60.0, twZ * 30.0);\n" +
+            "  float twB = step(0.8, twH(floor(twQ))) * smoothstep(0.5, 0.2, length(fract(twQ) - 0.5));\n" +
+            "  twC = mix(twC, vec3(0.045, 0.04, 0.04), twB * uMarb * twTrd);\n" +
+            "  float twN = twH(vec2(floor(twZ * 8.0), floor(twU * 18.0)));\n" +
+            "  float twM = smoothstep(1.0 - uCords * 1.15, 1.2 - uCords * 1.15, twN);\n" +
+            "  float twK = smoothstep(0.18, 0.06, abs(fract(twU * 70.0) - 0.5));\n" +
+            "  twC = mix(twC, vec3(0.78, 0.74, 0.62), twK * twM * twTrd * 0.9);\n" +
+            "  twC = mix(twC, twC * vec3(1.15, 0.8, 0.65), uHeat * 0.6 * twRub);\n" +
+            "  float twL = dot(twC, vec3(0.299, 0.587, 0.114));\n" +
+            "  twC = mix(twC, vec3(twL * 0.8 + 0.08), uFade * 0.85 * twBnd);\n" +
+            "  diffuseColor.rgb = twC;")
+          .replace("#include <roughnessmap_fragment>", "#include <roughnessmap_fragment>\n  roughnessFactor = mix(roughnessFactor, mix(0.55, 0.95, 1.0 - uGloss), step(0.5, vTwZone));");
+    };
+    m.customProgramCacheKey = () => "tyrewear|" + (base.customProgramCacheKey ? base.customProgramCacheKey() : "");
+    m.wearU = U; m.wearLast = null;
+    return m;
+  },
+  // push a wearLook() result into a tyreWearMat; returns true if anything moved
+  setTyreWear(m, o){
+    const U = m.wearU; if(!U) return false;
+    const L = m.wearLast, e = 0.002;
+    if(L && Math.abs(o.gloss - L.gloss) < e && Math.abs(o.scuff - L.scuff) < e && Math.abs(o.fade - L.fade) < e && Math.abs(o.grain - L.grain) < e &&
+       Math.abs(o.marbles - L.marbles) < e && Math.abs(o.cords - L.cords) < e && Math.abs(o.heat - L.heat) < e) return false;
+    U.uGloss.value = o.gloss; U.uScuff.value = o.scuff; U.uFade.value = o.fade; U.uGrain.value = o.grain;
+    U.uMarb.value = o.marbles; U.uCords.value = o.cords; U.uHeat.value = o.heat;
+    m.wearLast = { gloss:o.gloss, scuff:o.scuff, fade:o.fade, grain:o.grain, marbles:o.marbles, cords:o.cords, heat:o.heat };
+    return true;
   },
   /* Cut-away for whatever stands between the overhead camera and your car.
      The camera looks down a straight line, so an occluder is anything nearer the

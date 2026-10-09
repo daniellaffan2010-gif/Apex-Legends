@@ -1,3 +1,4 @@
+import { planStop } from '../car/pitstop.js';
 import * as THREE from 'three';
 import { clamp } from '../config/util.js';
 import { TEAMS } from '../config/teams.js';
@@ -30,7 +31,7 @@ const CARVIEW = {
     const grid = new THREE.GridHelper(12, 12, 0x8A9098, 0xAEB3B9); grid.position.y = 0.002; sc.add(grid);
     this.persp = new THREE.PerspectiveCamera(30, 1, 0.1, 200);
     this.ortho = new THREE.OrthographicCamera(-4, 4, 3, -3, 0.1, 200);
-    this.state = { team:0, tyre:"soft", steer:0, boost:false, brake:false, pit:0, spin:0, damage:new Set(), view:"q34", az:0.8, el:0.35, dist:9 };
+    this.state = { team:0, tyre:"soft", steer:0, boost:false, brake:false, wear:0, pit:0, spin:0, damage:new Set(), view:"q34", az:0.8, el:0.35, dist:9 };
     this.ui(); this.rebuild(); this.setView("q34");
     const tick = () => { if(!this.on) return; requestAnimationFrame(tick); this.render(); };
     requestAnimationFrame(tick);
@@ -40,7 +41,7 @@ const CARVIEW = {
     const st = this.state, t = TEAMS[st.team];
     const c = { team:t, drv:t.drivers[0], idx:0, ai:false, broken:new Set(st.damage), tyre:TYRES[st.tyre], steer:st.steer,
                 boost:st.boost ? 1 : 0, batt:1, brk:st.brake ? 1 : 0, x:0, y:0, z:0, h:0, vx:st.spin, vy:0,
-                stopT:st.pit > 0 ? (1 - st.pit) * 3 + 0.001 : 0, stopTotal:3, pitT:0, pitStopTime:0 };
+                life:1 - st.wear, stopT:st.pit > 0 ? (1 - st.pit) * 3 + 0.001 : 0, stopTotal:3, pitT:0, pitStopTime:0 };
     return c;
   },
   rebuild(){
@@ -63,8 +64,10 @@ const CARVIEW = {
   },
   render(){
     const cv = G3.cv, w = cv.clientWidth || 800, h = cv.clientHeight || 600, asp = w / h, st = this.state;
-    const c = this.c; c.steer = st.steer; c.boost = st.boost ? 1 : 0; c.brk = st.brake ? 1 : 0; c.vx = st.spin;
-    c.stopT = st.pit > 0 ? (1 - st.pit) * 3 + 0.001 : 0;
+    const c = this.c; c.steer = st.steer; c.boost = st.boost ? 1 : 0; c.brk = st.brake ? 1 : 0; c.vx = st.spin; c.life = 1 - st.wear;
+    // the pit-stop preview plays a real stop's timeline (car/pitstop.js): jacks, each wheel off and on
+    if(st.pit > 0){ if(!this.fakeStop) this.fakeStop = planStop(c, { tyre:"soft" }); this.fakeStop.t = (1 - st.pit) * this.fakeStop.go; c.pp = { phase:"stopped", st:this.fakeStop }; }
+    else { c.pp = null; this.fakeStop = null; }
     this.clock += 1 / 60;
     G3.carAnim(this.car, c, { clock:this.clock, wet:0, track:null }, 1 / 60);
     this.car.position.y = (this.car.userData.lift || 0);
@@ -105,6 +108,9 @@ const CARVIEW = {
     const r5 = row(); r5.appendChild(document.createTextNode("Damage:"));
     for(const k of ["wing", "rear", "floor", "susp", "punct", "brakes"])
       tog(r5, k, () => st.damage.has(k), v => { v ? st.damage.add(k) : st.damage.delete(k); this.c.broken = new Set(st.damage); });
+    const r5b = row(); r5b.appendChild(document.createTextNode("Tyre wear:"));
+    const wear = document.createElement("input"); wear.type = "range"; wear.id = "cv-wear"; wear.min = 0; wear.max = 100; wear.value = 0; wear.style.width = "140px";
+    wear.oninput = () => { st.wear = wear.value / 100; }; r5b.appendChild(wear);
     const r6 = row(); r6.appendChild(document.createTextNode("Pit stop:"));
     const pit = document.createElement("input"); pit.type = "range"; pit.min = 0; pit.max = 100; pit.value = 0; pit.style.width = "140px";
     pit.oninput = () => { st.pit = pit.value / 100; }; r6.appendChild(pit);

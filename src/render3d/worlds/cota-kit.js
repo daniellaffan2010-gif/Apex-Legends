@@ -19,10 +19,16 @@ const sst = (a, b, v) => { const t = clamp((v - a) / (b - a), 0, 1); return t * 
 class Mesher {
   constructor(){ this.pos = []; this.col = []; }
   get tris(){ return this.pos.length / 9; }
+  /* zero-area triangles are dropped: their vertex normals come out zero-length and
+     Lambert's normalize() turns them into NaN, which the bloom pass smears into white blobs */
   tri(a, b, c, C){
+    const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2], vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
+    const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx, A = nx * nx + ny * ny + nz * nz;
+    if(!(A > 1e-10)) return false;
     const p = this.pos, q = this.col;
     p.push(a[0], a[2], a[1], b[0], b[2], b[1], c[0], c[2], c[1]);
     q.push(C.r, C.g, C.b, C.r, C.g, C.b, C.r, C.g, C.b);
+    return true;
   }
   quad(a, b, c, d, C){ this.tri(a, b, c, C); this.tri(a, c, d, C); }
   /* an oriented box on the ground (z0 up to z0+h); l along ang, w across */

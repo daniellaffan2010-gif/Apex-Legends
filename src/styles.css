@@ -112,9 +112,22 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
   color:var(--cyan);border-top:1px solid var(--line);padding-top:4px}
 .h-tc .last{font-size:10px;color:var(--dim);letter-spacing:.1em;text-transform:uppercase;margin-top:4px;font-weight:600}
 .h-bl{position:absolute;left:12px;bottom:calc(12px + env(safe-area-inset-bottom,0px));display:flex;gap:8px;align-items:flex-end}
-.tyre{width:56px;text-align:center;background:rgba(11,14,18,.82);border:1px solid var(--line);border-radius:2px;padding:6px}
-.tyre .cmp{width:26px;height:26px;border-radius:50%;margin:0 auto 5px;border:4px solid var(--tyc,#888);background:#15181D;
-  display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;color:var(--tyc,#888)}
+.tyre{width:60px;text-align:center;background:rgba(11,14,18,.82);border:1px solid var(--line);border-radius:2px;padding:6px}
+.tyre{position:relative}
+.tyre .tw{display:block;margin:0 auto 3px}
+.tyre .tw-ring{stroke:var(--tyc,#888)}
+.tyre .tw-fade{opacity:var(--fade,0)}
+.tyre .tw-lbl{fill:var(--tyc,#888)}
+.tyre .tw-scuff{opacity:calc(var(--scuff,0)*.85)}
+.tyre .tw-grain{opacity:calc(var(--grain,0)*.55)}
+.tyre .tw-marb{opacity:var(--marb,0)}
+.tyre .tw-heat{opacity:calc(var(--heat,0)*.5)}
+.tyre .tw-cords{opacity:calc(var(--cords,0)*.9)}
+.tyre .tw circle{transition:opacity .25s linear}
+.tyre .wstage{font-size:8px;letter-spacing:.06em;text-transform:uppercase;font-weight:700;color:var(--dim);margin-bottom:4px;white-space:nowrap;transition:opacity .15s linear}
+.tyre .wstage.swap{opacity:0}
+.tyre::after{content:"";position:absolute;inset:0;border-radius:2px;pointer-events:none;opacity:var(--cords,0);animation:twpulse 1.2s ease-in-out infinite}
+@keyframes twpulse{0%,100%{box-shadow:inset 0 0 0 1px rgba(255,75,62,.35)}50%{box-shadow:inset 0 0 7px 1px rgba(255,75,62,.95)}}
 .meter{height:5px;background:#2B333D;border-radius:1px;overflow:hidden}
 .meter i{display:block;height:100%;background:var(--green);transition:width .2s,background .3s}
 .energy{width:132px;background:rgba(11,14,18,.82);border:1px solid var(--line);border-radius:2px;padding:6px 8px}
@@ -155,6 +168,10 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
   color:#111;background:#FFC21A;border:1px solid #FFE27A;animation:scpulse 1s ease-in-out infinite}
 .h-tc .scline[hidden]{display:none!important}
 @keyframes scpulse{50%{background:#C98F00}}
+.h-tc .aeroline{margin-top:4px;padding:3px 9px;border-radius:5px;font-size:10px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;
+  color:#7FE3FF;background:rgba(4,14,20,.72);border:1px solid rgba(127,227,255,.45)}
+.h-tc .aeroline.dirty{color:#FFB070;background:rgba(24,12,4,.74);border-color:rgba(255,150,70,.55)}
+.h-tc .aeroline[hidden]{display:none!important}
 .h-tc .penline[hidden]{display:none!important}
 @keyframes penpulse{50%{opacity:.62}}
 .pennotes{margin:16px 0 0;font-size:12px;color:var(--dim);line-height:1.7}
@@ -186,6 +203,8 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 #t-boost{right:16px;bottom:calc(100px + env(safe-area-inset-bottom,0px));width:60px;height:60px;font-size:13px;
   background:rgba(55,214,232,.14);border-color:#2A5F6B;color:#9CE6F0}
 
+#t-cam{right:20px;bottom:calc(174px + env(safe-area-inset-bottom,0px));width:52px;height:52px;font-size:12px}
+
 /* pause + toast */
 #pause{position:absolute;inset:0;z-index:40;background:rgba(6,8,11,.88);display:flex;align-items:center;justify-content:center;backdrop-filter:blur(3px)}
 #pause[hidden]{display:none!important}
@@ -208,11 +227,21 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
   background:rgba(63,169,245,.16);border:1px solid #3FA9F5;color:#BFE4FF;padding:4px 12px;border-radius:2px;
   font-family:var(--disp);font-weight:700;letter-spacing:.16em;font-size:12px}
 .limiter[hidden]{display:none!important}
+.limiter b{font-weight:800;margin-right:6px}
+.limiter .hot{color:#FF7A6E}
+.limiter .pips{display:inline-block;vertical-align:middle;line-height:6px;margin:0 6px}
+.limiter .pip{display:inline-block;width:7px;height:7px;margin:1px;border-radius:50%;background:#3A4250}
+.limiter .pip.on{background:#FFB020}
+.limiter .pip.ok{background:#2FD07A}
+.limiter .lamp{display:inline-block;width:11px;height:11px;border-radius:50%;background:#FF4B3E;vertical-align:middle;box-shadow:0 0 8px #FF4B3E}
+.limiter .lamp.go{background:#2FD07A;box-shadow:0 0 10px #2FD07A}
 .h-bc{position:absolute;left:50%;bottom:calc(10px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);
   background:rgba(11,14,18,.8);border:1px solid var(--line);border-radius:3px;padding:5px 10px 3px}
 .h-bc[hidden]{display:none!important}
 .h-bc svg{display:block}
 .h-bc rect,.h-bc ellipse,.h-bc polygon{stroke:#0B0E12;stroke-width:1.2}
+/* in the cockpit the steering wheel sits bottom centre: the car diagram moves up the left side, out of its way */
+body.fpv .h-bc{left:12px;bottom:calc(76px + env(safe-area-inset-bottom,0px));transform:scale(.85);transform-origin:left bottom}
 #pitmenu{position:absolute;inset:0;z-index:45;background:rgba(6,8,11,.86);display:flex;align-items:center;
   justify-content:center;backdrop-filter:blur(3px)}
 #pitmenu[hidden]{display:none!important}
@@ -247,3 +276,50 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 #cine-sub{margin-top:8px;font:600 clamp(14px,1.6vw,22px) 'Barlow',sans-serif;letter-spacing:.18em;text-transform:uppercase;color:#FFB020}
 #cine-skip{position:absolute;right:4vw;bottom:13vh;font:600 13px 'Barlow',sans-serif;letter-spacing:.16em;text-transform:uppercase;color:#fff;opacity:0;transition:opacity .4s}
 #cine-fade{position:absolute;inset:0;background:#000;opacity:0}
+
+/* ---- loading screen: shown from "Head out" until the first frames of the session are on screen ---- */
+#loading{position:fixed;inset:0;z-index:60;background:#0a0c10;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;text-align:center}
+#loading[hidden]{display:none}
+#loading .big{font:900 italic clamp(32px,5vw,64px)/1 'Saira Condensed',sans-serif;letter-spacing:.03em;text-transform:uppercase;color:#fff}
+#loading .small{font:600 clamp(13px,1.4vw,18px) 'Barlow',sans-serif;letter-spacing:.18em;text-transform:uppercase;color:#FFB020}
+#loading .bar{margin-top:14px;width:min(320px,60vw);height:3px;background:rgba(255,255,255,.12);overflow:hidden}
+#loading .bar i{display:block;height:100%;width:35%;background:#FFB020;animation:simrest-run 1.3s ease-in-out infinite}
+
+/* ---- the rest of the race, simulated after the player retires (nothing is drawn) ---- */
+#simrest{position:fixed;inset:0;z-index:45;background:#0a0c10;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;text-align:center}
+#simrest[hidden]{display:none}
+#simrest .big{font:900 italic clamp(32px,5vw,64px)/1 'Saira Condensed',sans-serif;letter-spacing:.03em;text-transform:uppercase;color:#fff}
+#simrest .small{font:600 clamp(13px,1.4vw,18px) 'Barlow',sans-serif;letter-spacing:.18em;text-transform:uppercase;color:#FFB020}
+#simrest .bar{margin-top:14px;width:min(320px,60vw);height:3px;background:rgba(255,255,255,.12);overflow:hidden}
+#simrest .bar i{display:block;height:100%;width:35%;background:#FFB020;animation:simrest-run 1.3s ease-in-out infinite}
+@keyframes simrest-run{0%{transform:translateX(-100%)}100%{transform:translateX(290%)}}
+
+/* ---------- garage ---------- */
+.gsets{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px}
+.gset{background:var(--panel);border:1px solid var(--line);color:var(--text);padding:10px 12px;text-align:left;cursor:pointer;display:flex;flex-direction:column;gap:3px;font:inherit}
+.gset b{font-family:var(--disp);font-size:13px;letter-spacing:.04em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.gset small{font-size:10px;color:var(--dimmer);text-transform:uppercase;letter-spacing:.1em}
+.gset.sel{border-color:var(--amber);box-shadow:inset 0 -2px 0 var(--amber)}
+.gset.sel small{color:var(--amber)}
+.ginput{width:100%;box-sizing:border-box;background:var(--panel);border:1px solid var(--line);color:var(--text);padding:9px 11px;font:inherit}
+.gslide{margin-bottom:14px}
+.gs-h{display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px}
+.gs-v{color:var(--amber)}
+.gslide input[type=range]{width:100%;accent-color:var(--amber)}
+.gs-e{display:flex;justify-content:space-between;font-size:10px;color:var(--dimmer)}
+.gfx{display:grid;grid-template-columns:1fr 1fr;gap:6px 14px}
+.fx{display:flex;justify-content:space-between;font-size:12px;color:var(--dim);border-bottom:1px solid var(--line);padding:4px 0}
+.fx.up b{color:var(--green)}
+.fx.bad b{color:var(--red)}
+.gchart{width:100%;height:auto;aspect-ratio:520/300;background:var(--panel);border:1px solid var(--line)}
+.glegend{display:flex;gap:14px;margin-top:6px;font-size:11px;color:var(--dim)}
+.glegend i{display:inline-block;width:10px;height:3px;margin-right:5px;vertical-align:middle}
+.gnote{margin:0 0 10px;font-size:13px;line-height:1.55;color:var(--text)}
+.gstats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.gstats div{background:var(--panel);border:1px solid var(--line);padding:7px 9px;display:flex;flex-direction:column;gap:2px}
+.gstats span{font-size:10px;color:var(--dimmer);text-transform:uppercase;letter-spacing:.08em}
+.gby .by{display:flex;gap:10px;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--line);font-size:13px}
+.gby .by.top b{color:var(--purple)}
+.gby .by .dim{color:var(--dimmer)}
+.gby .by span:first-child{flex:1}
+.btn:disabled{opacity:.4;pointer-events:none}

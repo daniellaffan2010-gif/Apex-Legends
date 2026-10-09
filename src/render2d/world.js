@@ -476,13 +476,17 @@ function drawSegGroundBodyInner(ctx, T, S, i, j, P, n, w, ro, wall, E, Q, wet){
       const d1 = sg * (T.half + 0.05), d2 = sg * (T.half + 0.45);
       poly(ctx, Q(Math.min(d1, d2), Math.max(d1, d2)), "#E8EDF3");
     }
-    // the box itself
-    const bd = ((i - T.pitBox) % n + n) % n;
-    if(bd < 4 || bd > n - 3){
-      const b1 = sg * (T.half + 0.8), b2 = sg * (T.half + T.pitW - 0.8);
-      poly(ctx, Q(Math.min(b1, b2), Math.max(b1, b2)), "#F2C230");
-      const i1 = sg * (T.half + 1.5), i2 = sg * (T.half + T.pitW - 1.5);
-      poly(ctx, Q(Math.min(i1, i2), Math.max(i1, i2)), shade(P.road, 0.02));
+    // every team's box in the working lane, outlined in its colour; yours filled in yellow
+    if(T.pitBoxes && pr > 0.9){
+      const me = S.player && S.player.team;
+      for(const b of T.pitBoxes){
+        let d = i - b.f; if(d > n / 2) d -= n; if(d < -n / 2) d += n;
+        if(d < -1.2 || d > 0.6) continue;
+        const b1 = sg * (T.half + T.pitWorkOff - 1.9), b2 = sg * (T.half + T.pitWorkOff + 1.9);
+        poly(ctx, Q(Math.min(b1, b2), Math.max(b1, b2)), me && b.id === me.id ? "#F2C230" : b.team.body);
+        const i1 = sg * (T.half + T.pitWorkOff - 1.4), i2 = sg * (T.half + T.pitWorkOff + 1.4);
+        if(!(me && b.id === me.id)) poly(ctx, Q(Math.min(i1, i2), Math.max(i1, i2)), shade(P.road, 0.12));
+      }
     }
     // the pit wall, once the lane has fully separated
     if(pr > 0.9){
@@ -518,11 +522,11 @@ function drawSegGroundBodyInner(ctx, T, S, i, j, P, n, w, ro, wall, E, Q, wet){
   if(S.assistLine && S.player && !S.player.dnf){
     const dd = ((i - S.player.node + n) % n);
     if(dd < 42){
-      const me2 = S.player, boxing = (me2.pitReq || me2.pitting) && !me2.pitPlan;
+      const me2 = S.player, boxing = (me2.pitReq && !me2.pitVisit) || me2.pitting;
       const r2 = T.pitRamp(i);
       let alo = lo, col;
       if(boxing && r2 > 0.02){
-        alo = lerp(T.line[i], T.pitCentre(i), clamp(r2 * 1.7, 0, 1));
+        alo = lerp(T.line[i], T.pitFast ? T.pitFast(i) : T.pitCentre(i), clamp(r2 * 1.7, 0, 1));
         col = "rgba(63,169,245,.62)";
       } else {
         const v0 = T.vprof[i], soon = T.vprof[(i + 12) % n];
